@@ -22,9 +22,9 @@ class EufySdkDeviceEntity(CoordinatorEntity[EufySdkDataUpdateCoordinator]):
         dev = coordinator.data.get(sn, {})
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, sn)},
-            name=dev.get("name") or sn,
+            name=dev.get("name") or sn,  # the user's device name (e.g. "Dining room")
             manufacturer="eufy",
-            model=dev.get("codec"),
+            model=dev.get("model") or dev.get("codec"),  # the model code, not the codec
             serial_number=sn,
         )
 
