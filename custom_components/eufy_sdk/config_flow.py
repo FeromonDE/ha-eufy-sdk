@@ -1,98 +1,161 @@
-"""Adds config flow for EufySdk."""
+"""Config flow for eufy_sdk — connect to the bridge, then drive 2FA/captcha until logged in."""
 
 from __future__ import annotations
 
+from typing import Any
+
 import voluptuous as vol
 from homeassistant import config_entries
-from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.helpers import selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.loader import async_get_loaded_integration
-from slugify import slugify
 
 from .api import (
     EufySdkApiClient,
-    EufySdkApiClientAuthenticationError,
     EufySdkApiClientCommunicationError,
     EufySdkApiClientError,
 )
-from .const import DOMAIN, LOGGER
+from .const import CONF_HOST, CONF_PORT, DEFAULT_PORT, DOMAIN, LOGGER
 
 
 class EufySdkFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
-    """Config flow for EufySdk."""
+    """Ask for the bridge address, then walk the user through login (2FA / captcha)."""
 
     VERSION = 1
 
+    def __init__(self) -> None:
+        """Hold the in-flight bridge connection across steps."""
+        self._client: EufySdkApiClient | None = None
+        self._host: str = ""
+        self._port: int = DEFAULT_PORT
+
     async def async_step_user(
         self,
-        user_input: dict | None = None,
+        user_input: dict[str, Any] | None = None,
     ) -> config_entries.ConfigFlowResult:
-        """Handle a flow initialized by the user."""
-        _errors = {}
+        """Step 1: the bridge's host + port."""
+        errors: dict[str, str] = {}
         if user_input is not None:
+            self._host = user_input[CONF_HOST]
+            self._port = user_input[CONF_PORT]
+            await self.async_set_unique_id(f"{self._host}:{self._port}")
+            self._abort_if_unique_id_configured()
             try:
-                await self._test_credentials(
-                    username=user_input[CONF_USERNAME],
-                    password=user_input[CONF_PASSWORD],
+                self._client = EufySdkApiClient(
+                    self._host, self._port, async_get_clientsession(self.hass)
                 )
-            except EufySdkApiClientAuthenticationError as exception:
-                LOGGER.warning(exception)
-                _errors["base"] = "auth"
-            except EufySdkApiClientCommunicationError as exception:
-                LOGGER.error(exception)
-                _errors["base"] = "connection"
-            except EufySdkApiClientError as exception:
-                LOGGER.exception(exception)
-                _errors["base"] = "unknown"
+                await self._client.connect()
+            except EufySdkApiClientCommunicationError as err:
+                LOGGER.warning("bridge connect failed: %s", err)
+                errors["base"] = "cannot_connect"
             else:
-                await self.async_set_unique_id(
-                    ## Do NOT use this in production code
-                    ## The unique_id should never be something that can change
-                    ## https://developers.home-assistant.io/docs/config_entries_config_flow_handler#unique-ids
-                    unique_id=slugify(user_input[CONF_USERNAME])
-                )
-                self._abort_if_unique_id_configured()
-                return self.async_create_entry(
-                    title=user_input[CONF_USERNAME],
-                    data=user_input,
-                )
-
-        integration = async_get_loaded_integration(self.hass, DOMAIN)
-        assert integration.documentation is not None, (  # noqa: S101
-            "Integration documentation URL is not set in manifest.json"
-        )
+                return await self._continue_auth()
 
         return self.async_show_form(
             step_id="user",
-            description_placeholders={
-                "documentation_url": integration.documentation,
-            },
             data_schema=vol.Schema(
                 {
                     vol.Required(
-                        CONF_USERNAME,
-                        default=(user_input or {}).get(CONF_USERNAME, vol.UNDEFINED),
-                    ): selector.TextSelector(
-                        selector.TextSelectorConfig(
-                            type=selector.TextSelectorType.TEXT,
-                        ),
-                    ),
-                    vol.Required(CONF_PASSWORD): selector.TextSelector(
-                        selector.TextSelectorConfig(
-                            type=selector.TextSelectorType.PASSWORD,
+                        CONF_HOST,
+                        default=(user_input or {}).get(CONF_HOST, vol.UNDEFINED),
+                    ): selector.TextSelector(),
+                    vol.Required(
+                        CONF_PORT,
+                        default=(user_input or {}).get(CONF_PORT, DEFAULT_PORT),
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=1, max=65535, mode=selector.NumberSelectorMode.BOX
                         ),
                     ),
                 },
             ),
-            errors=_errors,
+            errors=errors,
         )
 
-    async def _test_credentials(self, username: str, password: str) -> None:
-        """Validate credentials."""
-        client = EufySdkApiClient(
-            username=username,
-            password=password,
-            session=async_get_clientsession(self.hass),
+    async def _continue_auth(self) -> config_entries.ConfigFlowResult:
+        """Route to the right step for the bridge's current auth state."""
+        assert self._client is not None
+        try:
+            auth = await self._client.auth_status()
+        except EufySdkApiClientError as err:
+            LOGGER.error("auth.status failed: %s", err)
+            await self._client.close()
+            self._client = None
+            return self.async_abort(reason="cannot_connect")
+
+        state = auth.get("state")
+        if state == "ok":
+            await self._client.close()  # the coordinator opens its own connection
+            self._client = None
+            return self.async_create_entry(
+                title=f"eufy bridge ({self._host})",
+                data={CONF_HOST: self._host, CONF_PORT: self._port},
+            )
+        if state == "require_2fa":
+            return await self.async_step_twofa()
+        if state == "require_captcha":
+            return await self.async_step_captcha()
+        # "pending": ask the bridge for a challenge, then re-route.
+        await self._client.retrigger_auth()
+        return await self._continue_auth()
+
+    async def async_step_twofa(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> config_entries.ConfigFlowResult:
+        """A 2FA code was sent to the account; submit it."""
+        assert self._client is not None
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            if user_input.get("resend"):
+                await self._client.retrigger_auth()
+                return await self._continue_auth()
+            auth = await self._client.submit_2fa(str(user_input["code"]))
+            if auth.get("state") == "ok":
+                return await self._continue_auth()
+            errors["base"] = "invalid_2fa"
+
+        return self.async_show_form(
+            step_id="twofa",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("code"): selector.TextSelector(),
+                    vol.Optional("resend", default=False): selector.BooleanSelector(),
+                },
+            ),
+            errors=errors,
         )
-        await client.async_get_data()
+
+    async def async_step_captcha(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> config_entries.ConfigFlowResult:
+        """Show the captcha image (as markdown in the step description) and take the answer."""
+        assert self._client is not None
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            if user_input.get("refresh"):
+                await self._client.retrigger_auth()
+                return await self._continue_auth()
+            auth = await self._client.submit_captcha(str(user_input["answer"]))
+            if auth.get("state") == "ok":
+                return await self._continue_auth()
+            errors["base"] = "invalid_captcha"
+
+        auth = await self._client.auth_status()
+        image = auth.get("image", "")
+        return self.async_show_form(
+            step_id="captcha",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("answer"): selector.TextSelector(),
+                    vol.Optional("refresh", default=False): selector.BooleanSelector(),
+                },
+            ),
+            # The frontend renders the step description as markdown; embed the captcha as a data-URI image.
+            description_placeholders={
+                "image": f"![captcha]({image})"
+                if image
+                else "(captcha unavailable — tick refresh)"
+            },
+            errors=errors,
+        )
