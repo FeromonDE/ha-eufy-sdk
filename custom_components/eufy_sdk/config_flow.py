@@ -35,8 +35,9 @@ class EufySdkFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         """Step 1: the bridge's host + port."""
         errors: dict[str, str] = {}
         if user_input is not None:
-            self._host = user_input[CONF_HOST]
-            self._port = user_input[CONF_PORT]
+            self._host = str(user_input[CONF_HOST]).strip()
+            # NumberSelector hands back a float (3012.0); int-ify it so the WS URL isn't ws://host:3012.0.
+            self._port = int(user_input[CONF_PORT])
             await self.async_set_unique_id(f"{self._host}:{self._port}")
             self._abort_if_unique_id_configured()
             try:

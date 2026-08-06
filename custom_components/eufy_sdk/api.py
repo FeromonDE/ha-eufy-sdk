@@ -40,7 +40,9 @@ class EufySdkApiClient:
         on_event: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         """Store the bridge address; the connection is opened by `connect`."""
-        self._url = f"ws://{host}:{port}/ws"
+        # int() the port defensively: HA's NumberSelector yields a float, which would make an invalid
+        # URL like ws://host:3012.0/ws.
+        self._url = f"ws://{host}:{int(port)}/ws"
         self._session = session
         self._on_event = on_event
         self._ws: aiohttp.ClientWebSocketResponse | None = None
