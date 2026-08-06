@@ -1,9 +1,9 @@
 """
 WebSocket client for the ha-eufy-sdk bridge.
 
-The bridge holds the eufy account (and drives 2FA/captcha); this client speaks its JSON protocol over
-one WebSocket. Request/response is `{id, cmd, …}` → `{id, ok, …}`; unsolicited `{event, …}` messages
-are dispatched to `on_event`. See the bridge's `docs/ws-protocol.md`.
+The bridge holds the eufy account (and drives 2FA/captcha); this client speaks its
+JSON protocol over one WebSocket. Request/response is `{id, cmd}` -> `{id, ok}`;
+unsolicited `{event}` messages go to `on_event`. See the bridge's `docs/ws-protocol.md`.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ class EufySdkApiClientCommunicationError(EufySdkApiClientError):
 
 
 class EufySdkApiClientAuthenticationError(EufySdkApiClientError):
-    """The bridge is not authenticated (needs 2FA/captcha) or rejected a command as unauthorised."""
+    """The bridge is not authenticated (needs 2FA/captcha) or rejected a command."""
 
 
 class EufySdkApiClient:
@@ -40,8 +40,8 @@ class EufySdkApiClient:
         on_event: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         """Store the bridge address; the connection is opened by `connect`."""
-        # int() the port defensively: HA's NumberSelector yields a float, which would make an invalid
-        # URL like ws://host:3012.0/ws.
+        # int() the port defensively: HA's NumberSelector yields a float, which
+        # would make an invalid URL like ws://host:3012.0/ws.
         self._url = f"ws://{host}:{int(port)}/ws"
         self._session = session
         self._on_event = on_event
@@ -82,8 +82,9 @@ class EufySdkApiClient:
         self._pending.clear()
 
     async def _receive_loop(self) -> None:
-        """Read frames: resolve pending requests by id, dispatch events to `on_event`."""
-        assert self._ws is not None
+        """Read frames: resolve pending requests by id, dispatch events."""
+        if self._ws is None:
+            return
         try:
             async for msg in self._ws:
                 if msg.type is not aiohttp.WSMsgType.TEXT:
@@ -107,7 +108,12 @@ class EufySdkApiClient:
                     )
             self._pending.clear()
 
-    async def rpc(self, cmd: str, timeout: float = 15, **args: Any) -> dict[str, Any]:
+    async def rpc(
+        self,
+        cmd: str,
+        timeout: float = 15,  # noqa: ASYNC109 — deliberate per-call timeout API
+        **args: Any,
+    ) -> dict[str, Any]:
         """Send a command and await its reply. Raises on `ok: false`."""
         if not self.connected:
             msg = "not connected"
@@ -130,7 +136,7 @@ class EufySdkApiClient:
 
     # ── auth (mirrors the bridge's auth.* protocol) ──
     async def auth_status(self) -> dict[str, Any]:
-        """The current auth state: {state: ok|require_2fa|require_captcha|pending, …}."""
+        """Return the current auth state (ok|require_2fa|require_captcha|pending)."""
         return (await self.rpc("auth.status"))["auth"]
 
     async def submit_2fa(self, code: str) -> dict[str, Any]:

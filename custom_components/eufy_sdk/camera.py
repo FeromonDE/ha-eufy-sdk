@@ -1,7 +1,8 @@
-"""Camera platform — a live camera per device that reports a stream, via the bridge's go2rtc."""
+"""Camera platform — a live camera per streaming device, via the bridge's go2rtc."""
 
 from __future__ import annotations
 
+from http import HTTPStatus
 from typing import TYPE_CHECKING
 
 from homeassistant.components.camera import Camera, CameraEntityFeature
@@ -18,7 +19,7 @@ if TYPE_CHECKING:
     from .coordinator import EufySdkDataUpdateCoordinator
     from .data import EufySdkConfigEntry
 
-# go2rtc (bundled in the bridge) serves RTSP here; go2rtc's stream id is the device serial.
+# go2rtc (bundled in the bridge) serves RTSP here; its stream id is the device serial.
 GO2RTC_RTSP_PORT = 8554
 
 
@@ -39,7 +40,7 @@ async def async_setup_entry(
 
 
 class EufySdkCamera(CoordinatorEntity["EufySdkDataUpdateCoordinator"], Camera):
-    """A camera streamed through the bridge: live via go2rtc RTSP, stills via the bridge snapshot."""
+    """A camera via the bridge: live via go2rtc RTSP, stills via snapshot."""
 
     _attr_has_entity_name = True
     _attr_name = None  # the device name is the camera name
@@ -75,18 +76,20 @@ class EufySdkCamera(CoordinatorEntity["EufySdkDataUpdateCoordinator"], Camera):
         return super().available and self._sn in self.coordinator.data
 
     async def stream_source(self) -> str:
-        """The go2rtc RTSP URL — HA's stream component + go2rtc do the protocol work."""
+        """Return the go2rtc RTSP URL — HA's stream component + go2rtc do the work."""
         return f"rtsp://{self._host}:{GO2RTC_RTSP_PORT}/{self._sn}"
 
     async def async_camera_image(
-        self, width: int | None = None, height: int | None = None
-    ) -> bytes | None:  # noqa: ARG002
-        """A still from the bridge's /snapshot endpoint."""
+        self,
+        width: int | None = None,  # noqa: ARG002
+        height: int | None = None,  # noqa: ARG002
+    ) -> bytes | None:
+        """Return a still from the bridge's /snapshot endpoint."""
         session = async_get_clientsession(self.hass)
         url = f"http://{self._host}:{self._port}/snapshot/{self._sn}"
         try:
             async with session.get(url, timeout=20) as resp:
-                if resp.status == 200:
+                if resp.status == HTTPStatus.OK:
                     return await resp.read()
         except (TimeoutError, OSError):
             return None

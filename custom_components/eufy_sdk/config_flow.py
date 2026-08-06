@@ -1,4 +1,4 @@
-"""Config flow for eufy_sdk — connect to the bridge, then drive 2FA/captcha until logged in."""
+"""Config flow for eufy_sdk — connect to the bridge, then drive 2FA/captcha to login."""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ class EufySdkFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         if user_input is not None:
             self._host = str(user_input[CONF_HOST]).strip()
-            # NumberSelector hands back a float (3012.0); int-ify it so the WS URL isn't ws://host:3012.0.
+            # NumberSelector hands back a float (3012.0); int-ify it for the WS URL.
             self._port = int(user_input[CONF_PORT])
             await self.async_set_unique_id(f"{self._host}:{self._port}")
             self._abort_if_unique_id_configured()
@@ -74,7 +74,8 @@ class EufySdkFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def _continue_auth(self) -> config_entries.ConfigFlowResult:
         """Route to the right step for the bridge's current auth state."""
-        assert self._client is not None
+        if self._client is None:
+            return self.async_abort(reason="cannot_connect")
         try:
             auth = await self._client.auth_status()
         except EufySdkApiClientError as err:
@@ -103,8 +104,9 @@ class EufySdkFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         self,
         user_input: dict[str, Any] | None = None,
     ) -> config_entries.ConfigFlowResult:
-        """A 2FA code was sent to the account; submit it."""
-        assert self._client is not None
+        """Submit the 2FA code that was sent to the account."""
+        if self._client is None:
+            return self.async_abort(reason="cannot_connect")
         errors: dict[str, str] = {}
         if user_input is not None:
             if user_input.get("resend"):
@@ -130,8 +132,9 @@ class EufySdkFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         self,
         user_input: dict[str, Any] | None = None,
     ) -> config_entries.ConfigFlowResult:
-        """Show the captcha image (as markdown in the step description) and take the answer."""
-        assert self._client is not None
+        """Show the captcha image (markdown in the description) and take the answer."""
+        if self._client is None:
+            return self.async_abort(reason="cannot_connect")
         errors: dict[str, str] = {}
         if user_input is not None:
             if user_input.get("refresh"):
@@ -152,7 +155,7 @@ class EufySdkFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                     vol.Optional("refresh", default=False): selector.BooleanSelector(),
                 },
             ),
-            # The frontend renders the step description as markdown; embed the captcha as a data-URI image.
+            # The frontend renders the description as markdown; embed the data-URI.
             description_placeholders={
                 "image": f"![captcha]({image})"
                 if image

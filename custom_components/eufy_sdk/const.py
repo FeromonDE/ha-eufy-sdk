@@ -12,5 +12,5 @@ CONF_HOST = "host"
 CONF_PORT = "port"
 DEFAULT_PORT = 3000
 
-# Schema version the integration is written against (the bridge sends its own in `hello`/`ready`).
+# Schema version this integration targets (the bridge sends its own in `hello`/`ready`).
 SUPPORTED_SCHEMA = 1

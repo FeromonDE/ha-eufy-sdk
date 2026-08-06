@@ -26,7 +26,7 @@ class EufySdkDataUpdateCoordinator(DataUpdateCoordinator[dict[str, dict]]):
                 await client.connect()
             auth = await client.auth_status()
             if auth.get("state") != "ok":
-                # The bridge needs a 2FA/captcha step again — HA will start the reauth flow.
+                # The bridge needs 2FA/captcha again — HA will start the reauth flow.
                 msg = f"bridge not authenticated (state: {auth.get('state')})"
                 raise ConfigEntryAuthFailed(msg)
             devices = await client.list_devices()

@@ -1,4 +1,4 @@
-"""Sensor platform — one diagnostic 'info' sensor per device, so every eufy device appears in HA."""
+"""Sensor platform — one diagnostic 'info' sensor per device, so each appears in HA."""
 
 from __future__ import annotations
 

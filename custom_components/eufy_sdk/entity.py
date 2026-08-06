@@ -10,7 +10,7 @@ from .coordinator import EufySdkDataUpdateCoordinator
 
 
 class EufySdkDeviceEntity(CoordinatorEntity[EufySdkDataUpdateCoordinator]):
-    """An entity attached to one eufy device (`sn`), driven by the bridge device list."""
+    """An entity attached to one eufy device (`sn`), from the bridge device list."""
 
     _attr_attribution = ATTRIBUTION
     _attr_has_entity_name = True
@@ -30,7 +30,7 @@ class EufySdkDeviceEntity(CoordinatorEntity[EufySdkDataUpdateCoordinator]):
 
     @property
     def device(self) -> dict:
-        """The latest device record from the coordinator (sn/name/codec/capabilities/stream)."""
+        """Return the latest device record (sn/name/codec/capabilities/stream)."""
         return self.coordinator.data.get(self._sn, {})
 
     @property
