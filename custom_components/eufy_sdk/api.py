@@ -1,138 +1,161 @@
-"""Sample API Client."""
+"""
+WebSocket client for the ha-eufy-sdk bridge.
+
+The bridge holds the eufy account (and drives 2FA/captcha); this client speaks its
+JSON protocol over one WebSocket. Request/response is `{id, cmd}` -> `{id, ok}`;
+unsolicited `{event}` messages go to `on_event`. See the bridge's `docs/ws-protocol.md`.
+"""
 
 from __future__ import annotations
 
 import asyncio
-import math
-import socket
-from contextlib import suppress
-from http import HTTPStatus
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import aiohttp
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 
 class EufySdkApiClientError(Exception):
-    """Exception to indicate a general API error."""
+    """A general bridge error."""
 
 
-class EufySdkApiClientCommunicationError(
-    EufySdkApiClientError,
-):
-    """Exception to indicate a communication error."""
+class EufySdkApiClientCommunicationError(EufySdkApiClientError):
+    """The bridge could not be reached / spoke unexpectedly."""
 
 
-class EufySdkApiClientAuthenticationError(
-    EufySdkApiClientError,
-):
-    """Exception to indicate an authentication error."""
-
-
-class EufySdkApiClientRateLimitError(
-    EufySdkApiClientCommunicationError,
-):
-    """Exception to indicate the API is rate limiting us."""
-
-    def __init__(self, message: str, retry_after: int | None = None) -> None:
-        """Store the backoff period requested by the API."""
-        super().__init__(message)
-        self.retry_after = retry_after
-
-
-def _parse_retry_after(response: aiohttp.ClientResponse) -> int:
-    """Return the backoff period (whole seconds) from the Retry-After header."""
-    value: float | None = None
-    retry_after = response.headers.get("Retry-After")
-    if retry_after is not None:
-        with suppress(ValueError):
-            value = float(retry_after)
-    if value is not None and math.isfinite(value) and value >= 0:
-        return math.ceil(value)
-    return 60
-
-
-def _verify_response_or_raise(response: aiohttp.ClientResponse) -> None:
-    """Verify that the response is valid."""
-    if response.status in (401, 403):
-        msg = "Invalid credentials"
-        raise EufySdkApiClientAuthenticationError(
-            msg,
-        )
-    if response.status == HTTPStatus.TOO_MANY_REQUESTS:
-        msg = "Rate limited by the API"
-        raise EufySdkApiClientRateLimitError(
-            msg,
-            retry_after=_parse_retry_after(response),
-        )
-    response.raise_for_status()
+class EufySdkApiClientAuthenticationError(EufySdkApiClientError):
+    """The bridge is not authenticated (needs 2FA/captcha) or rejected a command."""
 
 
 class EufySdkApiClient:
-    """Sample API Client."""
+    """A connection to one ha-eufy-sdk bridge."""
 
     def __init__(
         self,
-        username: str,
-        password: str,
+        host: str,
+        port: int,
         session: aiohttp.ClientSession,
+        on_event: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
-        """Sample API Client."""
-        self._username = username
-        self._password = password
+        """Store the bridge address; the connection is opened by `connect`."""
+        # int() the port defensively: HA's NumberSelector yields a float, which
+        # would make an invalid URL like ws://host:3012.0/ws.
+        self._url = f"ws://{host}:{int(port)}/ws"
         self._session = session
+        self._on_event = on_event
+        self._ws: aiohttp.ClientWebSocketResponse | None = None
+        self._recv_task: asyncio.Task | None = None
+        self._next_id = 0
+        self._pending: dict[int, asyncio.Future[dict[str, Any]]] = {}
 
-    async def async_get_data(self) -> Any:
-        """Get data from the API."""
-        return await self._api_wrapper(
-            method="get",
-            url="https://jsonplaceholder.typicode.com/posts/1",
-        )
+    @property
+    def connected(self) -> bool:
+        """Whether the WebSocket is open."""
+        return self._ws is not None and not self._ws.closed
 
-    async def async_set_title(self, value: str) -> Any:
-        """Get data from the API."""
-        return await self._api_wrapper(
-            method="patch",
-            url="https://jsonplaceholder.typicode.com/posts/1",
-            data={"title": value},
-            headers={"Content-type": "application/json; charset=UTF-8"},
-        )
-
-    async def _api_wrapper(
-        self,
-        method: str,
-        url: str,
-        data: dict | None = None,
-        headers: dict | None = None,
-    ) -> Any:
-        """Get information from the API."""
+    async def connect(self) -> None:
+        """Open the WebSocket and start the receive loop."""
+        if self.connected:
+            return
         try:
-            async with asyncio.timeout(10):
-                response = await self._session.request(
-                    method=method,
-                    url=url,
-                    headers=headers,
-                    json=data,
-                )
-                _verify_response_or_raise(response)
-                return await response.json()
+            self._ws = await self._session.ws_connect(self._url, heartbeat=30)
+        except (aiohttp.ClientError, TimeoutError, OSError) as err:
+            msg = f"cannot reach the bridge at {self._url}: {err}"
+            raise EufySdkApiClientCommunicationError(msg) from err
+        self._recv_task = asyncio.ensure_future(self._receive_loop())
 
-        except TimeoutError as exception:
-            msg = f"Timeout error fetching information - {exception}"
-            raise EufySdkApiClientCommunicationError(
-                msg,
-            ) from exception
-        except (aiohttp.ClientError, socket.gaierror) as exception:
-            msg = f"Error fetching information - {exception}"
-            raise EufySdkApiClientCommunicationError(
-                msg,
-            ) from exception
-        except EufySdkApiClientError:
-            # Our own typed errors (auth, rate-limit, communication) are already
-            # meaningful; re-raise so callers can branch on them instead of masking
-            # them with the broad handler below.
-            raise
-        except Exception as exception:  # pylint: disable=broad-except
-            msg = f"Something really wrong happened! - {exception}"
-            raise EufySdkApiClientError(
-                msg,
-            ) from exception
+    async def close(self) -> None:
+        """Close the WebSocket and cancel the receive loop."""
+        if self._recv_task:
+            self._recv_task.cancel()
+            self._recv_task = None
+        if self._ws:
+            await self._ws.close()
+            self._ws = None
+        for fut in self._pending.values():
+            if not fut.done():
+                fut.set_exception(
+                    EufySdkApiClientCommunicationError("connection closed")
+                )
+        self._pending.clear()
+
+    async def _receive_loop(self) -> None:
+        """Read frames: resolve pending requests by id, dispatch events."""
+        if self._ws is None:
+            return
+        try:
+            async for msg in self._ws:
+                if msg.type is not aiohttp.WSMsgType.TEXT:
+                    continue
+                data = msg.json()
+                mid = data.get("id")
+                if mid is not None and mid in self._pending:
+                    fut = self._pending.pop(mid)
+                    if not fut.done():
+                        fut.set_result(data)
+                elif data.get("event") and self._on_event:
+                    self._on_event(data)
+        except (aiohttp.ClientError, asyncio.CancelledError):
+            pass
+        finally:
+            # Fail any in-flight requests so callers don't hang on a dropped connection.
+            for fut in self._pending.values():
+                if not fut.done():
+                    fut.set_exception(
+                        EufySdkApiClientCommunicationError("connection lost")
+                    )
+            self._pending.clear()
+
+    async def rpc(
+        self,
+        cmd: str,
+        timeout: float = 15,  # noqa: ASYNC109 — deliberate per-call timeout API
+        **args: Any,
+    ) -> dict[str, Any]:
+        """Send a command and await its reply. Raises on `ok: false`."""
+        if not self.connected:
+            msg = "not connected"
+            raise EufySdkApiClientCommunicationError(msg)
+        self._next_id += 1
+        mid = self._next_id
+        fut: asyncio.Future[dict[str, Any]] = asyncio.get_event_loop().create_future()
+        self._pending[mid] = fut
+        await self._ws.send_json({"id": mid, "cmd": cmd, **args})  # type: ignore[union-attr]
+        try:
+            async with asyncio.timeout(timeout):
+                reply = await fut
+        except TimeoutError as err:
+            self._pending.pop(mid, None)
+            msg = f"{cmd}: timed out"
+            raise EufySdkApiClientCommunicationError(msg) from err
+        if not reply.get("ok"):
+            raise EufySdkApiClientError(reply.get("error", f"{cmd} failed"))
+        return reply
+
+    # ── auth (mirrors the bridge's auth.* protocol) ──
+    async def auth_status(self) -> dict[str, Any]:
+        """Return the current auth state (ok|require_2fa|require_captcha|pending)."""
+        return (await self.rpc("auth.status"))["auth"]
+
+    async def submit_2fa(self, code: str) -> dict[str, Any]:
+        """Submit a 2FA code; returns the new auth state."""
+        return (await self.rpc("auth.submit", code=code))["auth"]
+
+    async def submit_captcha(self, answer: str) -> dict[str, Any]:
+        """Submit a captcha answer; returns the new auth state."""
+        return (await self.rpc("auth.submit", captcha=answer))["auth"]
+
+    async def retrigger_auth(self) -> dict[str, Any]:
+        """Request a fresh 2FA code / captcha; returns the new auth state."""
+        return (await self.rpc("auth.retrigger"))["auth"]
+
+    # ── devices ──
+    async def list_devices(self) -> list[dict[str, Any]]:
+        """Every device the bridge exposes (sn/name/codec/capabilities/stream)."""
+        return (await self.rpc("devices.list"))["devices"]
+
+    async def set_property(self, sn: str, name: str, value: Any) -> None:
+        """Write a device property."""
+        await self.rpc("device.set", sn=sn, name=name, value=value)
