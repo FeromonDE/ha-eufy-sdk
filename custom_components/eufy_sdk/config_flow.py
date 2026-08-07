@@ -6,6 +6,7 @@ from typing import Any
 
 import voluptuous as vol
 from homeassistant import config_entries
+from homeassistant.core import callback
 from homeassistant.helpers import selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
@@ -14,13 +15,29 @@ from .api import (
     EufySdkApiClientCommunicationError,
     EufySdkApiClientError,
 )
-from .const import CONF_HOST, CONF_PORT, DEFAULT_PORT, DOMAIN, LOGGER
+from .const import (
+    CONF_HOST,
+    CONF_POLL_INTERVAL,
+    CONF_PORT,
+    DEFAULT_POLL_INTERVAL_MIN,
+    DEFAULT_PORT,
+    DOMAIN,
+    LOGGER,
+)
 
 
 class EufySdkFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
     """Ask for the bridge address, then walk the user through login (2FA / captcha)."""
 
     VERSION = 1
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,  # noqa: ARG004
+    ) -> EufySdkOptionsFlow:
+        """Return the options flow (poll interval)."""
+        return EufySdkOptionsFlow()
 
     def __init__(self) -> None:
         """Hold the in-flight bridge connection across steps."""
@@ -162,4 +179,37 @@ class EufySdkFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                 else "(captcha unavailable — tick refresh)"
             },
             errors=errors,
+        )
+
+
+class EufySdkOptionsFlow(config_entries.OptionsFlow):
+    """Options: how often the bridge polls the cloud (minutes)."""
+
+    async def async_step_init(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> config_entries.ConfigFlowResult:
+        """Show and save the poll interval."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+        current = self.config_entry.options.get(
+            CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL_MIN
+        )
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_POLL_INTERVAL, default=current
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=1,
+                            max=1440,
+                            step=1,
+                            unit_of_measurement="min",
+                            mode=selector.NumberSelectorMode.BOX,
+                        ),
+                    ),
+                },
+            ),
         )
