@@ -1,0 +1,47 @@
+"""Button platform — device-level actions the bridge exposes (HomeBase reboot)."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from homeassistant.components.button import ButtonDeviceClass, ButtonEntity
+
+from .entity import EufySdkDeviceEntity
+
+if TYPE_CHECKING:
+    from homeassistant.core import HomeAssistant
+    from homeassistant.helpers.entity_platform import AddEntitiesCallback
+
+    from .coordinator import EufySdkDataUpdateCoordinator
+    from .data import EufySdkConfigEntry
+
+
+async def async_setup_entry(
+    hass: HomeAssistant,  # noqa: ARG001
+    entry: EufySdkConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Create a Reboot button for each device the bridge marked `canReboot`."""
+    coordinator = entry.runtime_data.coordinator
+    async_add_entities(
+        EufySdkRebootButton(coordinator, sn)
+        for sn, dev in coordinator.data.items()
+        if dev.get("canReboot")
+    )
+
+
+class EufySdkRebootButton(EufySdkDeviceEntity, ButtonEntity):
+    """Reboot a HomeBase — a device-level action, not a writable property."""
+
+    _attr_device_class = ButtonDeviceClass.RESTART
+    _attr_name = "Reboot"
+
+    def __init__(self, coordinator: EufySdkDataUpdateCoordinator, sn: str) -> None:
+        """Bind to a HomeBase serial."""
+        super().__init__(coordinator, sn)
+        self._attr_unique_id = f"{sn}_reboot"
+
+    async def async_press(self) -> None:
+        """Reboot the HomeBase (it drops offline for a minute or two)."""
+        client = self.coordinator.config_entry.runtime_data.client
+        await client.reboot(self._sn)

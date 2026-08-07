@@ -171,3 +171,7 @@ class EufySdkApiClient:
     async def set_property(self, sn: str, name: str, value: Any) -> None:
         """Write a device property."""
         await self.rpc("device.set", sn=sn, name=name, value=value)
+
+    async def reboot(self, sn: str) -> None:
+        """Reboot a HomeBase (hub-only; it drops offline for a minute or two)."""
+        await self.rpc("device.reboot", sn=sn)
