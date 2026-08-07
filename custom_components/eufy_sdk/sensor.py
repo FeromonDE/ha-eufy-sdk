@@ -11,6 +11,7 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import EntityCategory
 
+from .bespoke import BITFIELD_SWITCHES
 from .entity import EufySdkDeviceEntity, EufySdkPropertyEntity, classify
 
 if TYPE_CHECKING:
@@ -19,6 +20,14 @@ if TYPE_CHECKING:
 
     from .coordinator import EufySdkDataUpdateCoordinator
     from .data import EufySdkConfigEntry
+
+
+def _is_sensor(spec: dict) -> bool:
+    """Return True for classify()=="sensor", plus bitfields with no bespoke switches."""
+    kind = classify(spec)
+    if kind == "sensor":
+        return True
+    return kind == "bitfield" and spec["name"] not in BITFIELD_SWITCHES
 
 
 async def async_setup_entry(
@@ -35,7 +44,7 @@ async def async_setup_entry(
         EufySdkPropertySensor(coordinator, sn, spec)
         for sn in coordinator.data
         for spec in entry.runtime_data.properties.get(sn, [])
-        if classify(spec) == "sensor"
+        if _is_sensor(spec)
     )
     async_add_entities(entities)
 
@@ -74,14 +83,15 @@ class EufySdkPropertySensor(EufySdkPropertyEntity, SensorEntity):
     ) -> None:
         """Set unit + device/state class from the value's kind."""
         super().__init__(coordinator, sn, spec)
-        # An opaque code (a writable number/enum with no unit, kind or options — e.g. a
-        # bitmask like aiDetectType) is read-only here and belongs under diagnostics.
-        if (
+        # Opaque values are read-only and belong under diagnostics: an unsplit
+        # bitfield, or a writable code with no unit / scale / options.
+        opaque_code = (
             spec.get("writable")
             and not spec.get("unit")
             and not spec.get("kind")
             and not spec.get("enumValues")
-        ):
+        )
+        if spec.get("kind") == "bitfield" or opaque_code:
             self._attr_entity_category = EntityCategory.DIAGNOSTIC
         if spec.get("unit"):
             self._attr_native_unit_of_measurement = spec["unit"]

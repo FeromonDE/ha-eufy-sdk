@@ -52,14 +52,19 @@ def classify(spec: dict[str, Any]) -> str | None:
     """
     Route one property spec to exactly one platform, so no two platforms claim it.
 
-    A writable number is only a `number` when it has a `kind` or `unit` — a bounded
-    quantity you'd adjust (brightness %, volume, a timer). One with neither is an
-    opaque code/bitmask (e.g. `aiDetectType`); an editable box there invites writing
-    nonsense, so it becomes a read-only sensor. Same for a writable enum with no
-    options to choose from.
+    A `kind: "bitfield"` (e.g. `aiDetectType`) is never a scalar you'd nudge — it's a
+    pack of bits — so it routes to "bitfield" for bespoke handling (see bespoke.py):
+    known ones become per-bit switches, unknown ones a read-only sensor.
+
+    A writable number is only a `number` when it has a real scale (`kind` other than
+    bitfield, or a `unit`) — a bounded quantity you'd adjust (brightness %, a timer).
+    Otherwise it's an opaque code and becomes a read-only sensor, as does a writable
+    enum with no options to choose from.
     """
-    t, writable = spec.get("type"), spec.get("writable")
-    has_scale = bool(spec.get("kind") or spec.get("unit"))
+    t, writable, kind = spec.get("type"), spec.get("writable"), spec.get("kind")
+    if kind == "bitfield":
+        return "bitfield"
+    has_scale = bool(kind or spec.get("unit"))
     if t == "bool":
         return "switch" if writable else "binary_sensor"
     if t == "enum":
