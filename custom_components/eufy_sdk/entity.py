@@ -64,14 +64,17 @@ def classify(spec: dict[str, Any]) -> str | None:
     t, writable, kind = spec.get("type"), spec.get("writable"), spec.get("kind")
     if kind == "bitfield":
         return "bitfield"
+    # A fixed set of choices (enumValues) is a select when writable, a labelled sensor
+    # otherwise — regardless of the wire `type`, since some enums ride a numeric param
+    # (e.g. hubAlarmTone is type "number", kind "enum").
+    if spec.get("enumValues"):
+        return "select" if writable else "sensor"
     has_scale = bool(kind or spec.get("unit"))
     if t == "bool":
         return "switch" if writable else "binary_sensor"
-    if t == "enum":
-        return "select" if (writable and spec.get("enumValues")) else "sensor"
     if t == "number":
         return "number" if (writable and has_scale) else "sensor"
-    if t == "string":
+    if t in ("string", "enum"):
         return "sensor"
     return None
 
