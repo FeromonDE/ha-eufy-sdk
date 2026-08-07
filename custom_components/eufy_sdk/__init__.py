@@ -25,6 +25,10 @@ if TYPE_CHECKING:
 
 PLATFORMS: list[Platform] = [
     Platform.SENSOR,
+    Platform.BINARY_SENSOR,
+    Platform.SWITCH,
+    Platform.SELECT,
+    Platform.NUMBER,
     Platform.CAMERA,
 ]
 
@@ -52,6 +56,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufySdkConfigEntry) -> b
     )
 
     await coordinator.async_config_entry_first_refresh()
+
+    # Property manifests are static per device — fetch once so the platforms can
+    # build switch/select/number/sensor entities. A device that fails is skipped.
+    properties: dict[str, list] = {}
+    for sn, dev in coordinator.data.items():
+        if dev.get("error"):
+            continue
+        try:
+            properties[sn] = await client.get_properties(sn)
+        except Exception as err:  # noqa: BLE001 - one bad device must not abort setup
+            LOGGER.warning("could not fetch properties for %s: %s", sn, err)
+    entry.runtime_data.properties = properties
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 

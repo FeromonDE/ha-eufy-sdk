@@ -1,13 +1,17 @@
-"""Sensor platform — one diagnostic 'info' sensor per device, so each appears in HA."""
+"""Sensor platform — a diagnostic Info sensor plus one per read-only scalar property."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from homeassistant.components.sensor import SensorEntity
+from homeassistant.components.sensor import (
+    SensorDeviceClass,
+    SensorEntity,
+    SensorStateClass,
+)
 from homeassistant.const import EntityCategory
 
-from .entity import EufySdkDeviceEntity
+from .entity import EufySdkDeviceEntity, EufySdkPropertyEntity
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -16,15 +20,27 @@ if TYPE_CHECKING:
     from .coordinator import EufySdkDataUpdateCoordinator
     from .data import EufySdkConfigEntry
 
+# Read-only scalar properties become sensors; booleans go to binary_sensor instead.
+_SENSOR_TYPES = {"number", "string", "enum"}
+
 
 async def async_setup_entry(
     hass: HomeAssistant,  # noqa: ARG001
     entry: EufySdkConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Create one info sensor per device the bridge reported."""
+    """Create an Info sensor per device, plus a sensor per read-only scalar."""
     coordinator = entry.runtime_data.coordinator
-    async_add_entities(EufySdkInfoSensor(coordinator, sn) for sn in coordinator.data)
+    entities: list[SensorEntity] = [
+        EufySdkInfoSensor(coordinator, sn) for sn in coordinator.data
+    ]
+    entities.extend(
+        EufySdkPropertySensor(coordinator, sn, spec)
+        for sn in coordinator.data
+        for spec in entry.runtime_data.properties.get(sn, [])
+        if spec.get("type") in _SENSOR_TYPES and not spec.get("writable")
+    )
+    async_add_entities(entities)
 
 
 class EufySdkInfoSensor(EufySdkDeviceEntity, SensorEntity):
@@ -48,3 +64,40 @@ class EufySdkInfoSensor(EufySdkDeviceEntity, SensorEntity):
     def extra_state_attributes(self) -> dict:
         """Expose the capability list + serial for a host to inspect."""
         return {"serial": self._sn, "capabilities": self.device.get("capabilities", [])}
+
+
+class EufySdkPropertySensor(EufySdkPropertyEntity, SensorEntity):
+    """A read-only number / string / enum property as a sensor."""
+
+    def __init__(
+        self,
+        coordinator: EufySdkDataUpdateCoordinator,
+        sn: str,
+        spec: dict[str, Any],
+    ) -> None:
+        """Set unit + device/state class from the value's kind."""
+        super().__init__(coordinator, sn, spec)
+        if spec.get("unit"):
+            self._attr_native_unit_of_measurement = spec["unit"]
+        kind = spec.get("kind")
+        if kind == "percent":
+            self._attr_state_class = SensorStateClass.MEASUREMENT
+            if "battery" in self._prop.lower():
+                self._attr_device_class = SensorDeviceClass.BATTERY
+        elif kind == "dbm":
+            self._attr_device_class = SensorDeviceClass.SIGNAL_STRENGTH
+            self._attr_state_class = SensorStateClass.MEASUREMENT
+        elif kind == "celsius":
+            self._attr_device_class = SensorDeviceClass.TEMPERATURE
+            self._attr_state_class = SensorStateClass.MEASUREMENT
+
+    @property
+    def native_value(self) -> Any:
+        """Current value; enums render as their label, structured values are dropped."""
+        v = self.prop_value
+        if v is None:
+            return None
+        enum = self._spec.get("enumValues")
+        if enum:
+            return enum.get(str(v), v) if isinstance(v, (int, str)) else None
+        return v if isinstance(v, (int, float, str)) else None

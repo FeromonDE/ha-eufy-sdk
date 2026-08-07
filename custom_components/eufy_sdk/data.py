@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -23,3 +23,5 @@ class EufySdkData:
     client: EufySdkApiClient
     coordinator: EufySdkDataUpdateCoordinator
     integration: Integration
+    # Per-device property manifests ({sn: [spec, …]}), fetched once at setup.
+    properties: dict[str, list[dict[str, Any]]] = field(default_factory=dict)

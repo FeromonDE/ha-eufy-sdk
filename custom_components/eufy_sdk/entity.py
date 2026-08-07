@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import re
+from typing import Any
+
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -37,3 +40,37 @@ class EufySdkDeviceEntity(CoordinatorEntity[EufySdkDataUpdateCoordinator]):
     def available(self) -> bool:
         """Available while the bridge still reports this device."""
         return super().available and self._sn in self.coordinator.data
+
+
+def label_for(prop: str) -> str:
+    """Turn a camelCase name into a human label ('statusLed' -> 'Status Led')."""
+    spaced = re.sub(r"(?<!^)(?=[A-Z])", " ", prop)
+    return spaced[:1].upper() + spaced[1:]
+
+
+class EufySdkPropertyEntity(EufySdkDeviceEntity):
+    """An entity bound to one property, reading its live value from the `state` map."""
+
+    def __init__(
+        self,
+        coordinator: EufySdkDataUpdateCoordinator,
+        sn: str,
+        spec: dict[str, Any],
+    ) -> None:
+        """Bind to a property spec ({name, type, unit, kind, writable, enumValues})."""
+        super().__init__(coordinator, sn)
+        self._spec = spec
+        self._prop: str = spec["name"]
+        self._attr_unique_id = f"{sn}_{self._prop}"
+        self._attr_name = label_for(self._prop)
+
+    @property
+    def prop_value(self) -> Any:
+        """The property's current value from the device's live `state` map."""
+        return self.device.get("state", {}).get(self._prop)
+
+    async def write(self, value: Any) -> None:
+        """Write the property back through the bridge, then refresh."""
+        client = self.coordinator.config_entry.runtime_data.client
+        await client.set_property(self._sn, self._prop, value)
+        await self.coordinator.async_request_refresh()

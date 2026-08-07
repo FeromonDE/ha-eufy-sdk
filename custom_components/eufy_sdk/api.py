@@ -153,8 +153,12 @@ class EufySdkApiClient:
 
     # ── devices ──
     async def list_devices(self) -> list[dict[str, Any]]:
-        """Every device the bridge exposes (sn/name/codec/capabilities/stream)."""
+        """Every device the bridge exposes (sn/name/model/codec/capabilities/state)."""
         return (await self.rpc("devices.list"))["devices"]
+
+    async def get_properties(self, sn: str) -> list[dict[str, Any]]:
+        """Return a device's property manifest (name/type/unit/writable/enumValues)."""
+        return (await self.rpc("device.properties", sn=sn))["properties"]
 
     async def set_property(self, sn: str, name: str, value: Any) -> None:
         """Write a device property."""
