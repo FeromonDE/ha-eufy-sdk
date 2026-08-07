@@ -9,7 +9,7 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
 )
 
-from .entity import EufySdkPropertyEntity
+from .entity import EufySdkPropertyEntity, classify
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -47,7 +47,7 @@ async def async_setup_entry(
         EufySdkBinarySensor(coordinator, sn, spec)
         for sn in coordinator.data
         for spec in entry.runtime_data.properties.get(sn, [])
-        if spec.get("type") == "bool" and not spec.get("writable")
+        if classify(spec) == "binary_sensor"
     )
 
 

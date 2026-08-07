@@ -11,7 +11,7 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import EntityCategory
 
-from .entity import EufySdkDeviceEntity, EufySdkPropertyEntity
+from .entity import EufySdkDeviceEntity, EufySdkPropertyEntity, classify
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -20,16 +20,13 @@ if TYPE_CHECKING:
     from .coordinator import EufySdkDataUpdateCoordinator
     from .data import EufySdkConfigEntry
 
-# Read-only scalar properties become sensors; booleans go to binary_sensor instead.
-_SENSOR_TYPES = {"number", "string", "enum"}
-
 
 async def async_setup_entry(
     hass: HomeAssistant,  # noqa: ARG001
     entry: EufySdkConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Create an Info sensor per device, plus a sensor per read-only scalar."""
+    """Create an Info sensor per device, plus a sensor per property routed here."""
     coordinator = entry.runtime_data.coordinator
     entities: list[SensorEntity] = [
         EufySdkInfoSensor(coordinator, sn) for sn in coordinator.data
@@ -38,7 +35,7 @@ async def async_setup_entry(
         EufySdkPropertySensor(coordinator, sn, spec)
         for sn in coordinator.data
         for spec in entry.runtime_data.properties.get(sn, [])
-        if spec.get("type") in _SENSOR_TYPES and not spec.get("writable")
+        if classify(spec) == "sensor"
     )
     async_add_entities(entities)
 
@@ -77,6 +74,15 @@ class EufySdkPropertySensor(EufySdkPropertyEntity, SensorEntity):
     ) -> None:
         """Set unit + device/state class from the value's kind."""
         super().__init__(coordinator, sn, spec)
+        # An opaque code (a writable number/enum with no unit, kind or options — e.g. a
+        # bitmask like aiDetectType) is read-only here and belongs under diagnostics.
+        if (
+            spec.get("writable")
+            and not spec.get("unit")
+            and not spec.get("kind")
+            and not spec.get("enumValues")
+        ):
+            self._attr_entity_category = EntityCategory.DIAGNOSTIC
         if spec.get("unit"):
             self._attr_native_unit_of_measurement = spec["unit"]
         kind = spec.get("kind")

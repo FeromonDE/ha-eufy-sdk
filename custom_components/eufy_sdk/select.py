@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.select import SelectEntity
 
-from .entity import EufySdkPropertyEntity
+from .entity import EufySdkPropertyEntity, classify
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -27,9 +27,7 @@ async def async_setup_entry(
         EufySdkSelect(coordinator, sn, spec)
         for sn in coordinator.data
         for spec in entry.runtime_data.properties.get(sn, [])
-        if spec.get("type") == "enum"
-        and spec.get("writable")
-        and spec.get("enumValues")
+        if classify(spec) == "select"
     )
 
 

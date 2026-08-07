@@ -48,6 +48,29 @@ def label_for(prop: str) -> str:
     return spaced[:1].upper() + spaced[1:]
 
 
+def classify(spec: dict[str, Any]) -> str | None:
+    """
+    Route one property spec to exactly one platform, so no two platforms claim it.
+
+    A writable number is only a `number` when it has a `kind` or `unit` — a bounded
+    quantity you'd adjust (brightness %, volume, a timer). One with neither is an
+    opaque code/bitmask (e.g. `aiDetectType`); an editable box there invites writing
+    nonsense, so it becomes a read-only sensor. Same for a writable enum with no
+    options to choose from.
+    """
+    t, writable = spec.get("type"), spec.get("writable")
+    has_scale = bool(spec.get("kind") or spec.get("unit"))
+    if t == "bool":
+        return "switch" if writable else "binary_sensor"
+    if t == "enum":
+        return "select" if (writable and spec.get("enumValues")) else "sensor"
+    if t == "number":
+        return "number" if (writable and has_scale) else "sensor"
+    if t == "string":
+        return "sensor"
+    return None
+
+
 class EufySdkPropertyEntity(EufySdkDeviceEntity):
     """An entity bound to one property, reading its live value from the `state` map."""
 
