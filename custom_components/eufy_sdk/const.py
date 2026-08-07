@@ -12,5 +12,10 @@ CONF_HOST = "host"
 CONF_PORT = "port"
 DEFAULT_PORT = 3000
 
+# Options: how often the bridge polls the cloud for device state (minutes).
+# Drives both the bridge's cloud poll (config.set) and how often HA reads it.
+CONF_POLL_INTERVAL = "poll_interval_minutes"
+DEFAULT_POLL_INTERVAL_MIN = 10
+
 # Schema version this integration targets (the bridge sends its own in `hello`/`ready`).
 SUPPORTED_SCHEMA = 1

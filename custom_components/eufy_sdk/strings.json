@@ -35,5 +35,16 @@
       "already_configured": "This bridge is already configured.",
       "cannot_connect": "Could not reach the bridge."
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "eufy bridge options",
+        "description": "How often the bridge polls the eufy cloud for device state. Lower is fresher but adds cloud traffic; the cloud itself only updates every few minutes.",
+        "data": {
+          "poll_interval_minutes": "Cloud poll interval (minutes)"
+        }
+      }
+    }
   }
 }

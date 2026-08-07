@@ -160,6 +160,14 @@ class EufySdkApiClient:
         """Return a device's property manifest (name/type/unit/writable/enumValues)."""
         return (await self.rpc("device.properties", sn=sn))["properties"]
 
+    async def get_config(self) -> dict[str, Any]:
+        """Return the bridge's runtime config (currently {pollMs})."""
+        return await self.rpc("config.get")
+
+    async def set_poll_ms(self, poll_ms: int) -> int:
+        """Set the cloud poll interval (ms); returns the new effective value."""
+        return (await self.rpc("config.set", pollMs=poll_ms))["pollMs"]
+
     async def set_property(self, sn: str, name: str, value: Any) -> None:
         """Write a device property."""
         await self.rpc("device.set", sn=sn, name=name, value=value)

@@ -14,7 +14,14 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.loader import async_get_loaded_integration
 
 from .api import EufySdkApiClient
-from .const import CONF_HOST, CONF_PORT, DOMAIN, LOGGER
+from .const import (
+    CONF_HOST,
+    CONF_POLL_INTERVAL,
+    CONF_PORT,
+    DEFAULT_POLL_INTERVAL_MIN,
+    DOMAIN,
+    LOGGER,
+)
 from .coordinator import EufySdkDataUpdateCoordinator
 from .data import EufySdkData
 
@@ -35,11 +42,13 @@ PLATFORMS: list[Platform] = [
 
 async def async_setup_entry(hass: HomeAssistant, entry: EufySdkConfigEntry) -> bool:
     """Set up eufy_sdk from a config entry."""
+    poll_min = entry.options.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL_MIN)
     coordinator = EufySdkDataUpdateCoordinator(
         hass=hass,
         logger=LOGGER,
         name=DOMAIN,
-        update_interval=timedelta(minutes=5),
+        # HA reads the bridge at the same cadence the bridge polls the cloud.
+        update_interval=timedelta(minutes=poll_min),
         config_entry=entry,
     )
     client = EufySdkApiClient(
@@ -56,6 +65,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufySdkConfigEntry) -> b
     )
 
     await coordinator.async_config_entry_first_refresh()
+
+    # Push the chosen poll interval to the bridge (the cloud-poll cadence lives there).
+    try:
+        await client.set_poll_ms(poll_min * 60_000)
+    except Exception as err:  # noqa: BLE001 - a failed config push shouldn't block setup
+        LOGGER.warning("could not set bridge poll interval: %s", err)
+
+    # Reload when the options change, so a new poll interval is applied.
+    entry.async_on_unload(entry.add_update_listener(_async_reload_on_update))
 
     # Property manifests are static per device — fetch once so the platforms can
     # build switch/select/number/sensor entities. A device that fails is skipped.
@@ -79,3 +97,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: EufySdkConfigEntry) -> 
     if unloaded:
         await entry.runtime_data.client.close()
     return unloaded
+
+
+async def _async_reload_on_update(
+    hass: HomeAssistant, entry: EufySdkConfigEntry
+) -> None:
+    """Reload the entry when its options change (e.g. a new poll interval)."""
+    await hass.config_entries.async_reload(entry.entry_id)
