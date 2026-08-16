@@ -46,5 +46,17 @@
         }
       }
     }
+  },
+  "device_automation": {
+    "trigger_type": {
+      "ringing": "Doorbell ringing",
+      "motion": "Motion detected",
+      "person": "Person detected",
+      "pet": "Pet detected",
+      "vehicle": "Vehicle detected",
+      "sound": "Sound detected",
+      "crying": "Crying detected",
+      "package_delivered": "Package delivered"
+    }
   }
 }
