@@ -8,15 +8,21 @@ from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
 )
+from homeassistant.core import callback
+from homeassistant.helpers.event import async_call_later
 
-from .entity import EufySdkPropertyEntity, classify
+from .const import DOMAIN
+from .entity import EufySdkDeviceEntity, EufySdkPropertyEntity, classify
+from .pushmap import PUSH_AUTO_OFF_SECONDS, PUSH_BINARY_SENSORS
 
 if TYPE_CHECKING:
-    from homeassistant.core import HomeAssistant
+    from homeassistant.core import Event, HomeAssistant
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
     from .coordinator import EufySdkDataUpdateCoordinator
     from .data import EufySdkConfigEntry
+
+EVENT_TYPE = f"{DOMAIN}_event"
 
 # Infer a device_class from the property name (substring match, first hit wins).
 _DEVICE_CLASS_BY_NAME: list[tuple[str, BinarySensorDeviceClass]] = [
@@ -41,14 +47,26 @@ async def async_setup_entry(
     entry: EufySdkConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Create a binary sensor for every read-only boolean property."""
+    """Create a binary sensor per read-only bool property, plus push-driven ones."""
     coordinator = entry.runtime_data.coordinator
-    async_add_entities(
+    entities: list[BinarySensorEntity] = [
         EufySdkBinarySensor(coordinator, sn, spec)
         for sn in coordinator.data
         for spec in entry.runtime_data.properties.get(sn, [])
         if classify(spec) == "binary_sensor"
-    )
+    ]
+    # Push-driven detections (motion / person): flipped ON in real time by the SDK's
+    # push channel, then auto-OFF (push has no "cleared" signal). Gated on capability.
+    for sn, dev in coordinator.data.items():
+        caps = set(dev.get("capabilities", []))
+        for bus_event, (key, name, device_class, cap) in PUSH_BINARY_SENSORS.items():
+            if cap in caps:
+                entities.append(
+                    EufyPushBinarySensor(
+                        coordinator, sn, bus_event, (key, name, device_class)
+                    )
+                )
+    async_add_entities(entities)
 
 
 class EufySdkBinarySensor(EufySdkPropertyEntity, BinarySensorEntity):
@@ -69,3 +87,58 @@ class EufySdkBinarySensor(EufySdkPropertyEntity, BinarySensorEntity):
         """On when the property's live value is truthy."""
         v = self.prop_value
         return None if v is None else bool(v)
+
+
+class EufyPushBinarySensor(EufySdkDeviceEntity, BinarySensorEntity):
+    """A detection driven by push events: ON on the event, auto-OFF after a delay."""
+
+    _attr_is_on = False
+
+    def __init__(
+        self,
+        coordinator: EufySdkDataUpdateCoordinator,
+        sn: str,
+        bus_event: str,
+        spec: tuple[str, str, BinarySensorDeviceClass],
+    ) -> None:
+        """Bind to one push event name (e.g. 'motion') for this device."""
+        super().__init__(coordinator, sn)
+        key, name, device_class = spec
+        self._bus_event = bus_event
+        self._attr_unique_id = f"{sn}_{key}"
+        self._attr_name = name
+        self._attr_device_class = device_class
+        self._cancel_off = None
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to the bus and cancel any pending auto-off on removal."""
+        await super().async_added_to_hass()
+        self.async_on_remove(self.hass.bus.async_listen(EVENT_TYPE, self._handle_event))
+        self.async_on_remove(self._cancel_timer)
+
+    @callback
+    def _cancel_timer(self) -> None:
+        """Cancel a pending auto-off timer, if any."""
+        if self._cancel_off is not None:
+            self._cancel_off()
+            self._cancel_off = None
+
+    @callback
+    def _handle_event(self, event: Event) -> None:
+        """Turn ON for this device's matching push event and (re)arm the auto-off."""
+        data = event.data
+        if data.get("deviceSn") != self._sn or data.get("event") != self._bus_event:
+            return
+        self._attr_is_on = True
+        self._cancel_timer()
+        self._cancel_off = async_call_later(
+            self.hass, PUSH_AUTO_OFF_SECONDS, self._auto_off
+        )
+        self.async_write_ha_state()
+
+    @callback
+    def _auto_off(self, _now: object) -> None:
+        """Clear the detection once the auto-off delay elapses."""
+        self._cancel_off = None
+        self._attr_is_on = False
+        self.async_write_ha_state()
