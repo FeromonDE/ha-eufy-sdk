@@ -11,7 +11,7 @@ from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN
+from .const import CONF_HOST, CONF_PORT, DOMAIN
 from .entity import EufySdkDeviceEntity
 
 if TYPE_CHECKING:
@@ -32,8 +32,10 @@ async def async_setup_entry(
 ) -> None:
     """Create a latest-event image for every device the bridge exposes as a camera."""
     coordinator = entry.runtime_data.coordinator
+    host = entry.data[CONF_HOST]
+    port = entry.data[CONF_PORT]
     async_add_entities(
-        EufySdkEventImage(hass, coordinator, sn)
+        EufySdkEventImage(hass, coordinator, sn, host, port)
         for sn, dev in coordinator.data.items()
         if dev.get("stream")
     )
@@ -43,9 +45,10 @@ class EufySdkEventImage(EufySdkDeviceEntity, ImageEntity):
     """
     Latest-detection-event thumbnail for one device.
 
-    Detection events (motion / person / doorbell / …) arrive on the HA bus carrying a
-    `thumbnailUrl` from the eufy cloud. We keep the latest URL and let HA's image proxy
-    fetch the bytes on demand, so the cloud URL never leaves the backend.
+    On a detection event the SDK downloads and retains the event's thumbnail; the
+    bridge serves the retained bytes at `/event-image/<sn>`. This entity fetches from
+    the bridge (never the raw cloud URL — that needs the SDK's auth/decode), and a
+    detection event on the HA bus tells HA the image changed and to re-fetch.
     """
 
     _attr_name = "Last event"
@@ -55,12 +58,14 @@ class EufySdkEventImage(EufySdkDeviceEntity, ImageEntity):
         hass: HomeAssistant,
         coordinator: EufySdkDataUpdateCoordinator,
         sn: str,
+        host: str,
+        port: int,
     ) -> None:
-        """Bind to a device serial and initialise the image entity."""
+        """Bind to a device serial + the bridge address."""
         EufySdkDeviceEntity.__init__(self, coordinator, sn)
         ImageEntity.__init__(self, hass)
         self._attr_unique_id = f"{sn}_last_event"
-        self._url: str | None = None
+        self._url = f"http://{host}:{port}/event-image/{sn}"
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to bridge device events while the entity is registered."""
@@ -69,22 +74,16 @@ class EufySdkEventImage(EufySdkDeviceEntity, ImageEntity):
 
     @callback
     def _handle_event(self, event: Event) -> None:
-        """Record the thumbnail URL from this device's latest event, then refresh."""
+        """Mark the image stale when this device reports an event with a thumbnail."""
         data = event.data
-        if data.get("deviceSn") != self._sn:
+        if data.get("deviceSn") != self._sn or not data.get("thumbnailUrl"):
             return
-        url = data.get("thumbnailUrl")
-        if not url:
-            return
-        self._url = url
-        # A new timestamp is what tells HA the image changed and to re-fetch it.
+        # A new timestamp tells HA the image changed and to re-fetch it from the bridge.
         self._attr_image_last_updated = dt_util.utcnow()
         self.async_write_ha_state()
 
     async def async_image(self) -> bytes | None:
-        """Fetch the current thumbnail's bytes (called by HA's image proxy)."""
-        if not self._url:
-            return None
+        """Fetch the retained thumbnail from the bridge (called by HA's image proxy)."""
         session = async_get_clientsession(self.hass)
         try:
             resp = await session.get(self._url, timeout=aiohttp.ClientTimeout(total=15))
