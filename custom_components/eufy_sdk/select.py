@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.select import SelectEntity
+from homeassistant.const import EntityCategory
 
 from .entity import EufySdkPropertyEntity, classify
 
@@ -33,6 +34,8 @@ async def async_setup_entry(
 
 class EufySdkSelect(EufySdkPropertyEntity, SelectEntity):
     """A writable enum property as a select — options are the enum labels."""
+
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(
         self,

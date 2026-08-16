@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.number import NumberEntity, NumberMode
+from homeassistant.const import EntityCategory
 
 from .entity import EufySdkPropertyEntity, classify
 
@@ -41,6 +42,7 @@ class EufySdkNumber(EufySdkPropertyEntity, NumberEntity):
     """A writable numeric property as a number."""
 
     _attr_native_step = 1
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(
         self,

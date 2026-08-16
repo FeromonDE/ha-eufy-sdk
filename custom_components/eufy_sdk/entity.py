@@ -48,6 +48,17 @@ def label_for(prop: str) -> str:
     return spaced[:1].upper() + spaced[1:]
 
 
+# Properties that stay a PRIMARY control (no entity_category), so they sit in the
+# device's main Controls area rather than under Configuration. Everything else writable
+# is a setting — the old eufy integration kept only enable/disable up top.
+PRIMARY_CONTROL_PROPS = frozenset({"enabled"})
+
+
+def is_setting(prop: str) -> bool:
+    """Return True when a writable property is a setting, not a primary control."""
+    return prop not in PRIMARY_CONTROL_PROPS
+
+
 def classify(spec: dict[str, Any]) -> str | None:
     """
     Route one property spec to exactly one platform, so no two platforms claim it.

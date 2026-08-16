@@ -75,6 +75,10 @@ class EufySdkInfoSensor(EufySdkDeviceEntity, SensorEntity):
 class EufySdkPropertySensor(EufySdkPropertyEntity, SensorEntity):
     """A read-only number / string / enum property as a sensor."""
 
+    # Read-only telemetry (battery, wifi, firmware, codes, unsplit bitfields) belongs
+    # under Diagnostics, not the main Controls area — matching the old eufy integration.
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
     def __init__(
         self,
         coordinator: EufySdkDataUpdateCoordinator,
@@ -83,16 +87,6 @@ class EufySdkPropertySensor(EufySdkPropertyEntity, SensorEntity):
     ) -> None:
         """Set unit + device/state class from the value's kind."""
         super().__init__(coordinator, sn, spec)
-        # Opaque values are read-only and belong under diagnostics: an unsplit
-        # bitfield, or a writable code with no unit / scale / options.
-        opaque_code = (
-            spec.get("writable")
-            and not spec.get("unit")
-            and not spec.get("kind")
-            and not spec.get("enumValues")
-        )
-        if spec.get("kind") == "bitfield" or opaque_code:
-            self._attr_entity_category = EntityCategory.DIAGNOSTIC
         if spec.get("unit"):
             self._attr_native_unit_of_measurement = spec["unit"]
         kind = spec.get("kind")
