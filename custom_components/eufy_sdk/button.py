@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from homeassistant.components.button import ButtonDeviceClass, ButtonEntity
+from homeassistant.const import EntityCategory
 
 from .entity import EufySdkDeviceEntity
 
@@ -34,6 +35,7 @@ class EufySdkRebootButton(EufySdkDeviceEntity, ButtonEntity):
     """Reboot a HomeBase — a device-level action, not a writable property."""
 
     _attr_device_class = ButtonDeviceClass.RESTART
+    _attr_entity_category = EntityCategory.CONFIG
     _attr_name = "Reboot"
 
     def __init__(self, coordinator: EufySdkDataUpdateCoordinator, sn: str) -> None:

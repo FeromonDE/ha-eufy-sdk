@@ -5,9 +5,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.switch import SwitchEntity
+from homeassistant.const import EntityCategory
 
 from .bespoke import BITFIELD_SWITCHES
-from .entity import EufySdkPropertyEntity, classify
+from .entity import EufySdkPropertyEntity, classify, is_setting
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -47,6 +48,17 @@ async def async_setup_entry(
 class EufySdkSwitch(EufySdkPropertyEntity, SwitchEntity):
     """A writable boolean property as a switch."""
 
+    def __init__(
+        self,
+        coordinator: EufySdkDataUpdateCoordinator,
+        sn: str,
+        spec: dict[str, Any],
+    ) -> None:
+        """Put a setting toggle under Configuration; leave a primary control up top."""
+        super().__init__(coordinator, sn, spec)
+        if is_setting(self._prop):
+            self._attr_entity_category = EntityCategory.CONFIG
+
     @property
     def is_on(self) -> bool | None:
         """On when the property's live value is truthy."""
@@ -78,6 +90,7 @@ class EufyBitmaskSwitch(EufySdkPropertyEntity, SwitchEntity):
         self._base: int = bitdef["base"]
         self._attr_unique_id = f"{sn}_{self._prop}_{self._bit}"
         self._attr_name = bitdef["label"]
+        self._attr_entity_category = EntityCategory.CONFIG
 
     def _mask(self) -> int:
         """Return the current full bitmask value (falls back to the enable base)."""
