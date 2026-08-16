@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from http import HTTPStatus
 from typing import TYPE_CHECKING
 
@@ -45,10 +46,12 @@ class EufySdkEventImage(EufySdkDeviceEntity, ImageEntity):
     """
     Latest-detection-event thumbnail for one device.
 
-    On a detection event the SDK downloads and retains the event's thumbnail; the
-    bridge serves the retained bytes at `/event-image/<sn>`. This entity fetches from
-    the bridge (never the raw cloud URL — that needs the SDK's auth/decode), and a
-    detection event on the HA bus tells HA the image changed and to re-fetch.
+    The SDK downloads and retains each event's thumbnail; the bridge serves the
+    retained bytes at `/event-image/<sn>`. This entity fetches from the bridge (never
+    the raw cloud URL — that needs the SDK's auth/decode). It refreshes on any push
+    event for the device and on the coordinator poll, stamping a new
+    `image_last_updated` only when the bytes change — so an already-retained
+    thumbnail shows even before the first event.
     """
 
     _attr_name = "Last event"
@@ -66,24 +69,42 @@ class EufySdkEventImage(EufySdkDeviceEntity, ImageEntity):
         ImageEntity.__init__(self, hass)
         self._attr_unique_id = f"{sn}_last_event"
         self._url = f"http://{host}:{port}/event-image/{sn}"
+        self._image: bytes | None = None
+        self._hash: str | None = None
 
     async def async_added_to_hass(self) -> None:
-        """Subscribe to bridge device events while the entity is registered."""
+        """Subscribe to bridge events and pull any already-retained thumbnail."""
         await super().async_added_to_hass()
         self.async_on_remove(self.hass.bus.async_listen(EVENT_TYPE, self._handle_event))
+        await self._refresh()
 
     @callback
     def _handle_event(self, event: Event) -> None:
-        """Mark the image stale when this device reports an event with a thumbnail."""
-        data = event.data
-        if data.get("deviceSn") != self._sn or not data.get("thumbnailUrl"):
+        """Re-pull the thumbnail when this device reports any event."""
+        if event.data.get("deviceSn") == self._sn:
+            self.hass.async_create_task(self._refresh())
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Piggyback the poll cadence to catch a thumbnail no event announced."""
+        self.hass.async_create_task(self._refresh())
+        super()._handle_coordinator_update()
+
+    async def _refresh(self) -> None:
+        """Fetch the retained thumbnail; stamp a new time only when the bytes change."""
+        data = await self._fetch()
+        if data is None:
             return
-        # A new timestamp tells HA the image changed and to re-fetch it from the bridge.
+        digest = hashlib.sha1(data, usedforsecurity=False).hexdigest()
+        if digest == self._hash:
+            return
+        self._image = data
+        self._hash = digest
         self._attr_image_last_updated = dt_util.utcnow()
         self.async_write_ha_state()
 
-    async def async_image(self) -> bytes | None:
-        """Fetch the retained thumbnail from the bridge (called by HA's image proxy)."""
+    async def _fetch(self) -> bytes | None:
+        """GET the retained thumbnail bytes from the bridge, or None if unavailable."""
         session = async_get_clientsession(self.hass)
         try:
             resp = await session.get(self._url, timeout=aiohttp.ClientTimeout(total=15))
@@ -92,3 +113,7 @@ class EufySdkEventImage(EufySdkDeviceEntity, ImageEntity):
             return await resp.read()
         except (aiohttp.ClientError, TimeoutError):
             return None
+
+    async def async_image(self) -> bytes | None:
+        """Return the last thumbnail we fetched (HA's image proxy calls this)."""
+        return self._image
