@@ -25,10 +25,17 @@ class EufySdkDataUpdateCoordinator(DataUpdateCoordinator[dict[str, dict]]):
             if not client.connected:
                 await client.connect()
             auth = await client.auth_status()
-            if auth.get("state") != "ok":
-                # The bridge needs 2FA/captcha again — HA will start the reauth flow.
-                msg = f"bridge not authenticated (state: {auth.get('state')})"
+            state = auth.get("state")
+            if state in ("require_2fa", "require_captcha"):
+                # Genuinely needs the user — start the reauth flow.
+                msg = f"bridge needs re-authentication (state: {state})"
                 raise ConfigEntryAuthFailed(msg)
+            if state != "ok":
+                # Transient: the bridge is still booting/logging in ("pending" after a
+                # restart). Retry next interval instead of freezing the entry in reauth;
+                # one boot-window poll must not stop updates indefinitely.
+                msg = f"bridge not ready yet (state: {state})"
+                raise UpdateFailed(msg)
             devices = await client.list_devices()
         except EufySdkApiClientAuthenticationError as err:
             raise ConfigEntryAuthFailed(err) from err

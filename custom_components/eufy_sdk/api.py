@@ -47,6 +47,9 @@ class EufySdkApiClient:
         self._on_event = on_event
         self._ws: aiohttp.ClientWebSocketResponse | None = None
         self._recv_task: asyncio.Task | None = None
+        self._reconnect_task: asyncio.Task | None = None
+        self._connect_lock = asyncio.Lock()
+        self._closing = False
         self._next_id = 0
         self._pending: dict[int, asyncio.Future[dict[str, Any]]] = {}
 
@@ -56,18 +59,25 @@ class EufySdkApiClient:
         return self._ws is not None and not self._ws.closed
 
     async def connect(self) -> None:
-        """Open the WebSocket and start the receive loop."""
-        if self.connected:
-            return
-        try:
-            self._ws = await self._session.ws_connect(self._url, heartbeat=30)
-        except (aiohttp.ClientError, TimeoutError, OSError) as err:
-            msg = f"cannot reach the bridge at {self._url}: {err}"
-            raise EufySdkApiClientCommunicationError(msg) from err
-        self._recv_task = asyncio.ensure_future(self._receive_loop())
+        """Open the WebSocket + receive loop (serialized against reconnect)."""
+        self._closing = False
+        async with self._connect_lock:
+            if self.connected:
+                return
+            try:
+                async with asyncio.timeout(15):
+                    self._ws = await self._session.ws_connect(self._url, heartbeat=30)
+            except (aiohttp.ClientError, TimeoutError, OSError) as err:
+                msg = f"cannot reach the bridge at {self._url}: {err}"
+                raise EufySdkApiClientCommunicationError(msg) from err
+            self._recv_task = asyncio.ensure_future(self._receive_loop())
 
     async def close(self) -> None:
-        """Close the WebSocket and cancel the receive loop."""
+        """Close the WebSocket and stop reconnecting."""
+        self._closing = True
+        if self._reconnect_task:
+            self._reconnect_task.cancel()
+            self._reconnect_task = None
         if self._recv_task:
             self._recv_task.cancel()
             self._recv_task = None
@@ -100,13 +110,36 @@ class EufySdkApiClient:
         except (aiohttp.ClientError, asyncio.CancelledError):
             pass
         finally:
-            # Fail any in-flight requests so callers don't hang on a dropped connection.
+            # Clear the socket so `connected` reports the drop, fail in-flight requests,
+            # and (unless deliberately closing) reconnect so events resume promptly, not
+            # only on the next poll.
+            self._ws = None
             for fut in self._pending.values():
                 if not fut.done():
                     fut.set_exception(
                         EufySdkApiClientCommunicationError("connection lost")
                     )
             self._pending.clear()
+            if not self._closing:
+                self._schedule_reconnect()
+
+    def _schedule_reconnect(self) -> None:
+        """Start the reconnect supervisor if it isn't already running."""
+        if self._reconnect_task and not self._reconnect_task.done():
+            return
+        self._reconnect_task = asyncio.ensure_future(self._reconnect())
+
+    async def _reconnect(self) -> None:
+        """Reopen the WebSocket with capped backoff until closed/connected."""
+        delay = 1
+        while not self._closing and not self.connected:
+            try:
+                await self.connect()
+            except EufySdkApiClientCommunicationError:
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, 60)
+            else:
+                return
 
     async def rpc(
         self,
