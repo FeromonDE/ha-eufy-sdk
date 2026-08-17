@@ -127,10 +127,10 @@ class EufySdkLastPersonSensor(EufySdkDeviceEntity, SensorEntity):
     """
     The most recent AI face-recognition result for a camera.
 
-    eufy's on-device AI puts the recognized person's name in the `personDetected`
-    push (`nick_name`, `person_id > 0`); an unmatched face has no name
-    (`person_id: -1`), and an explicitly unknown one arrives as `strangerDetected`.
-    This reads that off the event bus so a caller can automate on "who" was seen,
+    A `personDetected` push carries only a numeric `person_id`; the bridge resolves
+    it against the HomeBase face roster and adds `person_name` (+ `recognized`). So a
+    match shows the person's name, an unmatched face shows Unknown, and an explicit
+    `strangerDetected` shows Stranger — letting automations key on "who" was seen,
     not just "a person".
     """
 
@@ -157,9 +157,9 @@ class EufySdkLastPersonSensor(EufySdkDeviceEntity, SensorEntity):
         if ev == "strangerDetected":
             name, recognized, person_id = "Stranger", False, None
         elif ev == "personDetected":
-            nick = data.get("nick_name")
-            recognized = isinstance(nick, str) and bool(nick.strip())
-            name = nick.strip() if recognized else "Unknown"
+            person_name = data.get("person_name")
+            recognized = bool(data.get("recognized")) and bool(person_name)
+            name = person_name if recognized else "Unknown"
             person_id = data.get("person_id")
         else:
             return
