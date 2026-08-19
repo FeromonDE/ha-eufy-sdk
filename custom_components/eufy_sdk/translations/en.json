@@ -24,6 +24,10 @@
           "answer": "Captcha",
           "refresh": "Refresh image"
         }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate the eufy bridge",
+        "description": "The bridge at {host} needs to log in again (its session expired, so eufy is asking for 2FA/captcha). Make sure the bridge is running and reachable, then submit to continue."
       }
     },
     "error": {
@@ -33,7 +37,8 @@
     },
     "abort": {
       "already_configured": "This bridge is already configured.",
-      "cannot_connect": "Could not reach the bridge."
+      "cannot_connect": "Could not reach the bridge.",
+      "reauth_successful": "The bridge is authenticated again."
     }
   },
   "options": {
