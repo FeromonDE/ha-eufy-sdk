@@ -45,6 +45,41 @@ class EufySdkFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         self._host: str = ""
         self._port: int = DEFAULT_PORT
 
+    async def async_step_reauth(
+        self,
+        entry_data: dict[str, Any],
+    ) -> config_entries.ConfigFlowResult:
+        """
+        Re-drive login when the bridge loses auth after setup.
+
+        The coordinator raises `ConfigEntryAuthFailed` when the bridge auth is non-`ok`
+        (session expired → a fresh 2FA/captcha is needed). HA starts a reauth flow and
+        calls this; we reconnect and reuse the `twofa` / `captcha` steps so the user can
+        complete the challenge from inside HA.
+        """
+        self._host = entry_data[CONF_HOST]
+        self._port = int(entry_data[CONF_PORT])
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(
+        self,
+        user_input: dict[str, Any] | None = None,  # noqa: ARG002 — a bare confirm, no fields
+    ) -> config_entries.ConfigFlowResult:
+        """Reconnect to the bridge, then route to its current auth challenge."""
+        try:
+            self._client = EufySdkApiClient(
+                self._host, self._port, async_get_clientsession(self.hass)
+            )
+            await self._client.connect()
+        except EufySdkApiClientCommunicationError as err:
+            LOGGER.warning("bridge reconnect for reauth failed: %s", err)
+            return self.async_show_form(
+                step_id="reauth_confirm",
+                errors={"base": "cannot_connect"},
+                description_placeholders={"host": self._host},
+            )
+        return await self._continue_auth()
+
     async def async_step_user(
         self,
         user_input: dict[str, Any] | None = None,
@@ -105,9 +140,16 @@ class EufySdkFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         if state == "ok":
             await self._client.close()  # the coordinator opens its own connection
             self._client = None
-            return self.async_create_entry(
-                title=f"eufy bridge ({self._host})",
-                data={CONF_HOST: self._host, CONF_PORT: self._port},
+            # Reauth → the entry exists, so reload it; first setup → create it.
+            return (
+                self.async_update_reload_and_abort(
+                    self._get_reauth_entry(), data_updates={}
+                )
+                if self.source == config_entries.SOURCE_REAUTH
+                else self.async_create_entry(
+                    title=f"eufy bridge ({self._host})",
+                    data={CONF_HOST: self._host, CONF_PORT: self._port},
+                )
             )
         if state == "require_2fa":
             return await self.async_step_twofa()
