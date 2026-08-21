@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from time import monotonic
 from collections.abc import Callable
 from typing import Any
 
@@ -17,7 +18,11 @@ from .coordinator import EufySdkDataUpdateCoordinator
 # A device→cloud settings change (e.g. camera enable/disable) lags the P2P write by a few seconds.
 # After a write we refresh immediately (optimistic) AND once more after this delay, so the entity
 # reflects the settled cloud state instead of snapping back to the pre-write value until the next poll.
-POST_WRITE_REFRESH_SECS = 10
+POST_WRITE_REFRESH_SECS = 20
+# Hold the just-written value optimistically until slightly after the delayed re-pull, so the entity
+# doesn't snap back to the stale cloud value mid-propagation. If the write genuinely didn't take, the
+# re-pull / regular poll reveals the real value once this hold expires.
+ASSUMED_STATE_TTL_SECS = POST_WRITE_REFRESH_SECS + 5
 
 
 class EufySdkDeviceEntity(CoordinatorEntity[EufySdkDataUpdateCoordinator]):
@@ -114,16 +119,26 @@ class EufySdkPropertyEntity(EufySdkDeviceEntity):
         self._attr_unique_id = f"{sn}_{self._prop}"
         self._attr_name = label_for(self._prop)
         self._post_write_unsub: Callable[[], None] | None = None
+        self._assumed_value: Any = None
+        self._assumed_until: float = 0.0
 
     @property
     def prop_value(self) -> Any:
-        """The property's current value from the device's live `state` map."""
+        """The optimistic just-written value while its hold is live, else the device's live state."""
+        if self._assumed_value is not None:
+            if monotonic() < self._assumed_until:
+                return self._assumed_value
+            self._assumed_value = None  # hold expired → fall through to the real cloud value
         return self.device.get("state", {}).get(self._prop)
 
     async def write(self, value: Any) -> None:
         """Write the property, refresh now, and re-pull once after the cloud settles."""
         client = self.coordinator.config_entry.runtime_data.client
         await client.set_property(self._sn, self._prop, value)
+        # Send succeeded → keep showing the intended value; reconcile via the pull/poll below.
+        self._assumed_value = value
+        self._assumed_until = monotonic() + ASSUMED_STATE_TTL_SECS
+        self.async_write_ha_state()
         await self.coordinator.async_request_refresh()
         # Schedule a single delayed re-pull (replacing any pending one) so a slow-propagating change
         # is reflected without waiting for the next scheduled poll.
