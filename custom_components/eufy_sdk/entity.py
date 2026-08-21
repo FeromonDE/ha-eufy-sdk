@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceInfo
@@ -14,13 +13,14 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import ATTRIBUTION, DOMAIN
 from .coordinator import EufySdkDataUpdateCoordinator
 
-# A device→cloud settings change (e.g. camera enable/disable) lags the P2P write by a few seconds.
-# After a write we refresh immediately (optimistic) AND once more after this delay, so the entity
-# reflects the settled cloud state instead of snapping back to the pre-write value until the next poll.
-# Hold the just-written value optimistically so the entity doesn't snap back to the stale cloud value
-# while the change propagates. The hold is released ACTIVELY after the delayed cloud re-pull below (not
-# on a passive timeout), so the entity always re-renders to the true state: if the write genuinely
-# didn't take, it reverts to the real value at that point.
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+# A device→cloud settings change (e.g. camera enable/disable) lags the P2P write
+# by a few seconds. So on write we hold the just-written value optimistically and
+# reconcile via a delayed cloud re-pull: the hold is released ACTIVELY after that
+# pull (not on a timeout), so the entity always re-renders to the true state — if
+# the write didn't take, it reverts to the real value then.
 POST_WRITE_REFRESH_SECS = 20
 
 
@@ -122,19 +122,19 @@ class EufySdkPropertyEntity(EufySdkDeviceEntity):
 
     @property
     def prop_value(self) -> Any:
-        """The optimistic just-written value while the hold is active, else the device's live state."""
+        """The held optimistic value if set, else the device's live state."""
         if self._assumed_value is not None:
             return self._assumed_value
         return self.device.get("state", {}).get(self._prop)
 
     async def write(self, value: Any) -> None:
-        """Write the property, hold the value optimistically, and reconcile via a delayed cloud pull."""
+        """Write, hold the value optimistically, and reconcile via a delayed pull."""
         client = self.coordinator.config_entry.runtime_data.client
         await client.set_property(self._sn, self._prop, value)
-        # Send succeeded → keep showing the intended value until the delayed pull reconciles it.
+        # Keep the intended value shown until the delayed pull reconciles it.
         self._assumed_value = value
         self.async_write_ha_state()
-        # Schedule a single delayed re-pull (replacing any pending one) so a slow-propagating change
+        # Schedule one delayed re-pull (replacing any pending) so a slow change
         # is reflected without waiting for the next scheduled poll.
         if self._post_write_unsub is not None:
             self._post_write_unsub()
@@ -149,7 +149,7 @@ class EufySdkPropertyEntity(EufySdkDeviceEntity):
         self.hass.async_create_task(self._reconcile())
 
     async def _reconcile(self) -> None:
-        """Pull the fresh cloud state, drop the optimistic hold, and re-render to the true value."""
+        """Pull fresh cloud state, drop the optimistic hold, re-render to truth."""
         await self.coordinator.async_request_refresh()
         self._assumed_value = None
         self.async_write_ha_state()
