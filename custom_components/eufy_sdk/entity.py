@@ -3,13 +3,25 @@
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import ATTRIBUTION, DOMAIN
 from .coordinator import EufySdkDataUpdateCoordinator
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+# A device→cloud settings change (e.g. camera enable/disable) lags the P2P write
+# by a few seconds. So on write we hold the just-written value optimistically and
+# reconcile via a delayed cloud re-pull: the hold is released ACTIVELY after that
+# pull (not on a timeout), so the entity always re-renders to the true state — if
+# the write didn't take, it reverts to the real value then.
+POST_WRITE_REFRESH_SECS = 20
 
 
 class EufySdkDeviceEntity(CoordinatorEntity[EufySdkDataUpdateCoordinator]):
@@ -105,14 +117,47 @@ class EufySdkPropertyEntity(EufySdkDeviceEntity):
         self._prop: str = spec["name"]
         self._attr_unique_id = f"{sn}_{self._prop}"
         self._attr_name = label_for(self._prop)
+        self._post_write_unsub: Callable[[], None] | None = None
+        self._assumed_value: Any = None
 
     @property
     def prop_value(self) -> Any:
-        """The property's current value from the device's live `state` map."""
+        """The held optimistic value if set, else the device's live state."""
+        if self._assumed_value is not None:
+            return self._assumed_value
         return self.device.get("state", {}).get(self._prop)
 
     async def write(self, value: Any) -> None:
-        """Write the property back through the bridge, then refresh."""
+        """Write, hold the value optimistically, and reconcile via a delayed pull."""
         client = self.coordinator.config_entry.runtime_data.client
         await client.set_property(self._sn, self._prop, value)
+        # Keep the intended value shown until the delayed pull reconciles it.
+        self._assumed_value = value
+        self.async_write_ha_state()
+        # Schedule one delayed re-pull (replacing any pending) so a slow change
+        # is reflected without waiting for the next scheduled poll.
+        if self._post_write_unsub is not None:
+            self._post_write_unsub()
+        self._post_write_unsub = async_call_later(
+            self.hass, POST_WRITE_REFRESH_SECS, self._post_write_refresh
+        )
+
+    @callback
+    def _post_write_refresh(self, _now: Any) -> None:
+        """Fire the delayed post-write reconcile."""
+        self._post_write_unsub = None
+        self.hass.async_create_task(self._reconcile())
+
+    async def _reconcile(self) -> None:
+        """Pull fresh cloud state, drop the optimistic hold, re-render to truth."""
         await self.coordinator.async_request_refresh()
+        self._assumed_value = None
+        self.async_write_ha_state()
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Cancel a pending delayed refresh when the entity goes away."""
+        if self._post_write_unsub is not None:
+            self._post_write_unsub()
+            self._post_write_unsub = None
+        self._assumed_value = None
+        await super().async_will_remove_from_hass()
