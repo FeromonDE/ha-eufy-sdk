@@ -17,7 +17,7 @@ from .coordinator import EufySdkDataUpdateCoordinator
 # A device→cloud settings change (e.g. camera enable/disable) lags the P2P write by a few seconds.
 # After a write we refresh immediately (optimistic) AND once more after this delay, so the entity
 # reflects the settled cloud state instead of snapping back to the pre-write value until the next poll.
-POST_WRITE_REFRESH_SECS = 20
+POST_WRITE_REFRESH_SECS = 10
 
 
 class EufySdkDeviceEntity(CoordinatorEntity[EufySdkDataUpdateCoordinator]):
