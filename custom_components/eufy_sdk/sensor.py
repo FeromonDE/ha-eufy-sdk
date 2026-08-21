@@ -13,7 +13,7 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import callback
 
 from .bespoke import BITFIELD_SWITCHES
-from .const import DOMAIN
+from .const import CONF_HOST, DOMAIN
 from .entity import EufySdkDeviceEntity, EufySdkPropertyEntity, classify
 
 if TYPE_CHECKING:
@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from .data import EufySdkConfigEntry
 
 EVENT_TYPE = f"{DOMAIN}_event"
+GO2RTC_RTSP_PORT = 8554  # go2rtc RTSP listener in the bridge image
 
 
 def _is_sensor(spec: dict) -> bool:
@@ -55,6 +56,13 @@ async def async_setup_entry(
         EufySdkLastPersonSensor(coordinator, sn)
         for sn, dev in coordinator.data.items()
         if "person_detection" in dev.get("capabilities", [])
+    )
+    # A "Stream URL" sensor per camera — the RTSP URL while a live feed is active.
+    host = entry.data[CONF_HOST]
+    entities.extend(
+        EufyStreamUrlSensor(coordinator, sn, host)
+        for sn, dev in coordinator.data.items()
+        if dev.get("stream")
     )
     async_add_entities(entities)
 
@@ -170,3 +178,50 @@ class EufySdkLastPersonSensor(EufySdkDeviceEntity, SensorEntity):
             "event": ev,
         }
         self.async_write_ha_state()
+
+
+class EufyStreamUrlSensor(EufySdkDeviceEntity, SensorEntity):
+    """The camera's RTSP URL while a live feed is active; empty when not streaming."""
+
+    _attr_icon = "mdi:link-variant"
+
+    def __init__(
+        self,
+        coordinator: EufySdkDataUpdateCoordinator,
+        sn: str,
+        host: str,
+    ) -> None:
+        """Bind to a camera serial and remember the bridge host for the URL."""
+        super().__init__(coordinator, sn)
+        self._host = host
+        self._attr_unique_id = f"{sn}_stream_url"
+        self._attr_name = "Stream URL"
+        self._active: bool | None = None  # last streamState event; None → use poll
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to the bridge's streamState events for this device."""
+        await super().async_added_to_hass()
+        self.async_on_remove(self.hass.bus.async_listen(EVENT_TYPE, self._handle_event))
+
+    @callback
+    def _handle_event(self, event: Event) -> None:
+        """Track this device's streamState (on/off)."""
+        data = event.data
+        if data.get("deviceSn") != self._sn or data.get("event") != "streamState":
+            return
+        self._active = bool(data.get("active"))
+        self.async_write_ha_state()
+
+    @property
+    def _streaming(self) -> bool:
+        """Event value once seen; else the device-list `streaming` flag."""
+        if self._active is not None:
+            return self._active
+        return bool(self.device.get("streaming"))
+
+    @property
+    def native_value(self) -> str | None:
+        """The RTSP URL while streaming, else None (empty)."""
+        if not self._streaming:
+            return None
+        return f"rtsp://{self._host}:{GO2RTC_RTSP_PORT}/{self._sn}"
