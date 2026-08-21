@@ -3,13 +3,21 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from typing import Any
 
+from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import ATTRIBUTION, DOMAIN
 from .coordinator import EufySdkDataUpdateCoordinator
+
+# A device→cloud settings change (e.g. camera enable/disable) lags the P2P write by a few seconds.
+# After a write we refresh immediately (optimistic) AND once more after this delay, so the entity
+# reflects the settled cloud state instead of snapping back to the pre-write value until the next poll.
+POST_WRITE_REFRESH_SECS = 20
 
 
 class EufySdkDeviceEntity(CoordinatorEntity[EufySdkDataUpdateCoordinator]):
@@ -105,6 +113,7 @@ class EufySdkPropertyEntity(EufySdkDeviceEntity):
         self._prop: str = spec["name"]
         self._attr_unique_id = f"{sn}_{self._prop}"
         self._attr_name = label_for(self._prop)
+        self._post_write_unsub: Callable[[], None] | None = None
 
     @property
     def prop_value(self) -> Any:
@@ -112,7 +121,27 @@ class EufySdkPropertyEntity(EufySdkDeviceEntity):
         return self.device.get("state", {}).get(self._prop)
 
     async def write(self, value: Any) -> None:
-        """Write the property back through the bridge, then refresh."""
+        """Write the property, refresh now, and re-pull once after the cloud settles."""
         client = self.coordinator.config_entry.runtime_data.client
         await client.set_property(self._sn, self._prop, value)
         await self.coordinator.async_request_refresh()
+        # Schedule a single delayed re-pull (replacing any pending one) so a slow-propagating change
+        # is reflected without waiting for the next scheduled poll.
+        if self._post_write_unsub is not None:
+            self._post_write_unsub()
+        self._post_write_unsub = async_call_later(
+            self.hass, POST_WRITE_REFRESH_SECS, self._post_write_refresh
+        )
+
+    @callback
+    def _post_write_refresh(self, _now: Any) -> None:
+        """Fire the delayed post-write cloud re-pull."""
+        self._post_write_unsub = None
+        self.hass.async_create_task(self.coordinator.async_request_refresh())
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Cancel a pending delayed refresh when the entity goes away."""
+        if self._post_write_unsub is not None:
+            self._post_write_unsub()
+            self._post_write_unsub = None
+        await super().async_will_remove_from_hass()
