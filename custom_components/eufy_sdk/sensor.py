@@ -181,7 +181,7 @@ class EufySdkLastPersonSensor(EufySdkDeviceEntity, SensorEntity):
 
 
 class EufyStreamUrlSensor(EufySdkDeviceEntity, SensorEntity):
-    """The camera's RTSP URL while a live feed is active; empty when not streaming."""
+    """The camera's RTSP URL while streaming or rtspStream is on; else empty."""
 
     _attr_icon = "mdi:link-variant"
 
@@ -221,7 +221,8 @@ class EufyStreamUrlSensor(EufySdkDeviceEntity, SensorEntity):
 
     @property
     def native_value(self) -> str | None:
-        """The RTSP URL while streaming, else None (empty)."""
-        if not self._streaming:
+        """The RTSP URL while streaming or while rtspStream is on; else None."""
+        rtsp_on = self.device.get("state", {}).get("rtspStream") is True
+        if not self._streaming and not rtsp_on:
             return None
         return f"rtsp://{self._host}:{GO2RTC_RTSP_PORT}/{self._sn}"
