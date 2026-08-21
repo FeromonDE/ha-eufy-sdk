@@ -66,9 +66,9 @@ async def async_setup_entry(
                         coordinator, sn, bus_event, (key, name, device_class)
                     )
                 )
-    # A "Streaming" sensor per camera: ON while the bridge holds a live P2P feed for it (go2rtc
-    # pulling /stream). Edge-driven by the bridge's `streamState` event, with the device-list poll
-    # as the initial/reconnect value.
+    # A "Streaming" sensor per camera: ON while the bridge holds a live P2P feed
+    # (go2rtc pulling /stream). Edge-driven by the bridge's `streamState` event,
+    # with the device-list poll as the initial/reconnect value.
     entities.extend(
         EufyStreamingBinarySensor(coordinator, sn)
         for sn, dev in coordinator.data.items()
@@ -153,7 +153,7 @@ class EufyPushBinarySensor(EufySdkDeviceEntity, BinarySensorEntity):
 
 
 class EufyStreamingBinarySensor(EufySdkDeviceEntity, BinarySensorEntity):
-    """ON while a live P2P feed is active for this camera (someone/something is streaming it)."""
+    """ON while a live P2P feed is active (the camera is being streamed)."""
 
     _attr_device_class = BinarySensorDeviceClass.RUNNING
     _attr_name = "Streaming"
@@ -163,10 +163,12 @@ class EufyStreamingBinarySensor(EufySdkDeviceEntity, BinarySensorEntity):
         coordinator: EufySdkDataUpdateCoordinator,
         sn: str,
     ) -> None:
-        """Bind to a camera serial; start from the device-list value until an event arrives."""
+        """Bind to a camera serial; start from the device-list value pre-event."""
         super().__init__(coordinator, sn)
         self._attr_unique_id = f"{sn}_streaming"
-        self._active: bool | None = None  # last streamState event; None → fall back to the poll
+        self._active: bool | None = (
+            None  # last streamState event; None → fall back to the poll
+        )
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to the bridge's streamState events for this device."""
@@ -175,7 +177,7 @@ class EufyStreamingBinarySensor(EufySdkDeviceEntity, BinarySensorEntity):
 
     @callback
     def _handle_event(self, event: Event) -> None:
-        """Flip on/off from this device's streamState event (has both edges — no auto-off)."""
+        """Flip on/off from this device's streamState event (both edges)."""
         data = event.data
         if data.get("deviceSn") != self._sn or data.get("event") != "streamState":
             return
@@ -184,7 +186,7 @@ class EufyStreamingBinarySensor(EufySdkDeviceEntity, BinarySensorEntity):
 
     @property
     def is_on(self) -> bool:
-        """Event value once seen; otherwise the device-list `streaming` flag from the poll."""
+        """Event value once seen; else the device-list `streaming` flag."""
         if self._active is not None:
             return self._active
         return bool(self.device.get("streaming"))
