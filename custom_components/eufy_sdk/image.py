@@ -14,6 +14,7 @@ from homeassistant.util import dt as dt_util
 
 from .const import CONF_HOST, CONF_PORT, DOMAIN
 from .entity import EufySdkDeviceEntity
+from .pushmap import EVENT_IMAGE_REFRESH, THUMBNAIL_EVENTS
 
 if TYPE_CHECKING:
     from homeassistant.core import Event, HomeAssistant
@@ -48,8 +49,9 @@ class EufySdkEventImage(EufySdkDeviceEntity, ImageEntity):
 
     The SDK downloads and retains each event's thumbnail; the bridge serves the
     retained bytes at `/event-image/<sn>`. This entity fetches from the bridge (never
-    the raw cloud URL — that needs the SDK's auth/decode). It refreshes on any push
-    event for the device and on the coordinator poll, stamping a new
+    the raw cloud URL — that needs the SDK's auth/decode). It refreshes on a
+    detection push for the device (events that carry a new thumbnail — not
+    telemetry like ptzNotify) and on the coordinator poll, stamping a new
     `image_last_updated` only when the bytes change — so an already-retained
     thumbnail shows even before the first event.
     """
@@ -80,9 +82,23 @@ class EufySdkEventImage(EufySdkDeviceEntity, ImageEntity):
 
     @callback
     def _handle_event(self, event: Event) -> None:
-        """Re-pull the thumbnail when this device reports any event."""
-        if event.data.get("deviceSn") == self._sn:
-            self.hass.async_create_task(self._refresh())
+        """
+        Re-pull the thumbnail on a detection or the bridge's image-refresh nudge.
+
+        Fires on a detection event for this device, or on the bridge's
+        `eventImageUpdated` nudge once it has a fresh local cover. Telemetry/state
+        events the bridge also forwards (ptzNotify, batteryLevel, armingModeChanged,
+        …) carry no new thumbnail, so they must not stamp a new "Last event" or spam
+        the bridge with refetches. The coordinator poll (`_handle_coordinator_update`)
+        still catches any thumbnail no event announced.
+        """
+        data = event.data
+        if data.get("deviceSn") != self._sn:
+            return
+        ev = data.get("event")
+        if ev not in THUMBNAIL_EVENTS and ev != EVENT_IMAGE_REFRESH:
+            return
+        self.hass.async_create_task(self._refresh())
 
     @callback
     def _handle_coordinator_update(self) -> None:
