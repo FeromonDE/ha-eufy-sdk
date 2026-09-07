@@ -34,10 +34,14 @@ TRIGGER_MAP: dict[str, tuple[str, str]] = {
     "motion": ("motion", "motion"),
     "person": ("personDetected", "person_detection"),
     "pet": ("petDetection", "person_detection"),
+    "dog": ("dogDetected", "person_detection"),
     "vehicle": ("vehicleDetected", "person_detection"),
+    "stranger": ("strangerDetected", "person_detection"),
     "sound": ("soundDetected", "motion"),
     "crying": ("cryingDetected", "motion"),
     "package_delivered": ("packageDelivered", "doorbell"),
+    "package_taken": ("packageTaken", "doorbell"),
+    "package_stranded": ("packageStranded", "doorbell"),
 }
 
 TRIGGER_SCHEMA = DEVICE_TRIGGER_BASE_SCHEMA.extend(
