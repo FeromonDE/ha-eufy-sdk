@@ -58,10 +58,14 @@
       "motion": "Motion detected",
       "person": "Person detected",
       "pet": "Pet detected",
+      "dog": "Dog detected",
       "vehicle": "Vehicle detected",
+      "stranger": "Stranger detected",
       "sound": "Sound detected",
       "crying": "Crying detected",
-      "package_delivered": "Package delivered"
+      "package_delivered": "Package delivered",
+      "package_taken": "Package taken",
+      "package_stranded": "Package left out"
     }
   }
 }
