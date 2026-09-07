@@ -46,8 +46,9 @@ class EufySdkApiClient:
         self._url = f"ws://{host}:{int(port)}/ws"
         self._session = session
         self._on_event = on_event
-        # Called after the receive loop reconnects following a drop (e.g. a bridge restart), so the
-        # coordinator can refresh at once instead of leaving entities unavailable until the next poll.
+        # Called after the receive loop reconnects following a drop (e.g. a bridge
+        # restart), so the coordinator can refresh at once instead of leaving entities
+        # unavailable until the next poll.
         self._on_reconnect = on_reconnect
         self._ws: aiohttp.ClientWebSocketResponse | None = None
         self._recv_task: asyncio.Task | None = None
@@ -143,7 +144,8 @@ class EufySdkApiClient:
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, 60)
             else:
-                # Back up after a drop — let the coordinator recover entities now, not at the next poll.
+                # Back up after a drop — let the coordinator recover entities now, not
+                # at the next poll.
                 if self._on_reconnect:
                     self._on_reconnect()
                 return

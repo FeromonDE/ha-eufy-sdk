@@ -54,11 +54,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufySdkConfigEntry) -> b
         update_interval=timedelta(minutes=poll_min),
         config_entry=entry,
     )
-    # Forward every bridge event onto the HA event bus for automations — and recover fast when the
-    # bridge comes back. A bridge restart drops the WS and fails one coordinator poll, marking every
-    # entity `unavailable`; without a nudge they stay that way (and detections don't show) until the
-    # next poll, up to `poll_min` minutes later. So refresh the coordinator immediately on the bridge's
-    # `ready` broadcast (sent on every boot) and on a WS reconnect.
+
+    # Forward every bridge event onto the HA event bus for automations — and recover
+    # fast when the bridge comes back. A bridge restart drops the WS and fails one
+    # coordinator poll, marking every entity `unavailable`; without a nudge they stay
+    # that way (and detections don't show) until the next poll, up to `poll_min` minutes
+    # later. So refresh the coordinator immediately on the bridge's `ready` broadcast
+    # (sent on every boot) and on a WS reconnect.
     def _refresh_now() -> None:
         hass.async_create_task(coordinator.async_request_refresh())
 

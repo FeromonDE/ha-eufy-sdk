@@ -23,11 +23,12 @@ PUSH_BINARY_SENSORS: dict[str, tuple[str, str, BinarySensorDeviceClass, str]] = 
     ),
 }
 
-# Push events surfaced on a per-device "Detection" event entity. This is a CATCH-ALL: it fires on
-# whatever eufy reported — person, pet, vehicle, dog, … — so the Detection entity's timeline matches
-# what advanced "Last event". `motion` and `personDetected` are ALSO auto-off binary_sensors above
-# (PUSH_BINARY_SENSORS); listing them here too is intentional — the binary_sensor is the current
-# on/off state, the event entity is the discrete "something was detected" occurrence.
+# Push events surfaced on a per-device "Detection" event entity. This is a CATCH-ALL: it
+# fires on whatever eufy reported — person, pet, vehicle, dog, … — so the Detection
+# entity's timeline matches what advanced "Last event". `motion` and `personDetected`
+# are ALSO auto-off binary_sensors above (PUSH_BINARY_SENSORS); listing them here too is
+# intentional — the binary_sensor is the current on/off state, the event entity is the
+# discrete "something was detected" occurrence.
 # bus event name -> HA event_type
 DETECTION_EVENTS: dict[str, str] = {
     "motion": "motion",
