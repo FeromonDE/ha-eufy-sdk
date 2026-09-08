@@ -44,7 +44,7 @@ RUNNING_EFFECT = "lightCloudEffectId"  # the effect actually playing (0 = none)
 # Props this platform owns, so the generic switch/number platforms skip them.
 LIGHT_OWNED_PROPS = frozenset({POWER, BRIGHTNESS})
 # Read-only effect internals the light's effect picker already represents — hidden from
-# the generic sensor platform so smart_light gets no redundant "Light Effect Id" sensors.
+# the generic sensor platform so smart_light gets no redundant effect-id sensors.
 LIGHT_HIDDEN_PROPS = frozenset({"lightEffectId", "lightCloudEffectId"})
 
 
