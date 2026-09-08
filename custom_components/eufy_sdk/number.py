@@ -8,6 +8,7 @@ from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.const import EntityCategory
 
 from .entity import EufySdkPropertyEntity, classify
+from .light import LIGHT_OWNED_PROPS
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -35,6 +36,11 @@ async def async_setup_entry(
         for sn in coordinator.data
         for spec in entry.runtime_data.properties.get(sn, [])
         if classify(spec) == "number"
+        # The light platform owns lightBrightness for smart_light (see switch.py).
+        and not (
+            spec["name"] in LIGHT_OWNED_PROPS
+            and "smart_light" in set(coordinator.data[sn].get("capabilities", []))
+        )
     )
 
 
