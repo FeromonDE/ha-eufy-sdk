@@ -40,6 +40,7 @@ PLATFORMS: list[Platform] = [
     Platform.BUTTON,
     Platform.IMAGE,
     Platform.EVENT,
+    Platform.LIGHT,
 ]
 
 

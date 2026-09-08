@@ -210,6 +210,26 @@ class EufySdkApiClient:
         """Set the cloud poll interval (ms); returns the new effective value."""
         return (await self.rpc("config.set", pollMs=poll_ms))["pollMs"]
 
+    async def list_effects(self) -> list[dict[str, Any]]:
+        """
+        Return the smart-light effect gallery ({id, name, colors}) for effect_list.
+
+        Account-wide and cached by the bridge; the first call enumerates the catalogue
+        over several HTTP round-trips, hence the longer timeout.
+        """
+        reply = await self.rpc("light.effects", timeout=60)
+        return reply.get("effects", [])
+
+    async def action(self, sn: str, action: str, *args: Any) -> Any:
+        """
+        Invoke a capability action (a typed method, not a scalar property) on a device.
+
+        e.g. smart_light `setColor({red,green,blue})` / `setEffect(id)` — controls that
+        `set_property` can't reach because they take structured arguments.
+        """
+        reply = await self.rpc("device.action", sn=sn, action=action, args=list(args))
+        return reply.get("result")
+
     async def set_property(self, sn: str, name: str, value: Any) -> None:
         """Write a device property."""
         await self.rpc("device.set", sn=sn, name=name, value=value)
