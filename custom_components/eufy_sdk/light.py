@@ -28,7 +28,7 @@ from homeassistant.core import callback
 from homeassistant.helpers.event import async_call_later
 
 from .const import LOGGER
-from .entity import POST_WRITE_REFRESH_SECS, EufySdkDeviceEntity
+from .entity import POST_WRITE_REFRESH_SECS, EufySdkDeviceEntity, has_capability
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -58,9 +58,7 @@ async def async_setup_entry(
     """Create one light per device that has the `smart_light` capability."""
     coordinator = entry.runtime_data.coordinator
     smart_lights = [
-        sn
-        for sn, dev in coordinator.data.items()
-        if "smart_light" in set(dev.get("capabilities", []))
+        sn for sn, dev in coordinator.data.items() if has_capability(dev, "smart_light")
     ]
     if not smart_lights:
         return

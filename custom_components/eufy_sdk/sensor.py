@@ -14,7 +14,12 @@ from homeassistant.core import callback
 
 from .bespoke import BITFIELD_SWITCHES
 from .const import CONF_HOST, DOMAIN, LOGGER
-from .entity import EufySdkDeviceEntity, EufySdkPropertyEntity, classify
+from .entity import (
+    EufySdkDeviceEntity,
+    EufySdkPropertyEntity,
+    classify,
+    has_capability,
+)
 from .light import LIGHT_HIDDEN_PROPS
 
 if TYPE_CHECKING:
@@ -54,14 +59,14 @@ async def async_setup_entry(
         # A smart_light's effect internals are represented by the light's effect picker.
         and not (
             spec["name"] in LIGHT_HIDDEN_PROPS
-            and "smart_light" in set(coordinator.data[sn].get("capabilities", []))
+            and has_capability(coordinator.data[sn], "smart_light")
         )
     )
     # A "Last person" sensor for AI face recognition — surfaces the recognized name.
     entities.extend(
         EufySdkLastPersonSensor(coordinator, sn)
         for sn, dev in coordinator.data.items()
-        if "person_detection" in dev.get("capabilities", [])
+        if has_capability(dev, "person_detection")
     )
     # A "Stream URL" sensor per camera — the RTSP URL while a live feed is active.
     host = entry.data[CONF_HOST]
@@ -74,9 +79,7 @@ async def async_setup_entry(
     # gallery), not the raw id. Fetch the catalogue once (bridge-cached); on failure the
     # sensor falls back to rendering the id as "Effect <n>".
     smart_lights = [
-        sn
-        for sn, dev in coordinator.data.items()
-        if "smart_light" in set(dev.get("capabilities", []))
+        sn for sn, dev in coordinator.data.items() if has_capability(dev, "smart_light")
     ]
     if smart_lights:
         name_by_id: dict[int, str] = {}
