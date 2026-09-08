@@ -13,7 +13,7 @@ from homeassistant.helpers.event import async_call_later
 
 from .const import DOMAIN
 from .entity import EufySdkDeviceEntity, EufySdkPropertyEntity, classify
-from .pushmap import PUSH_AUTO_OFF_SECONDS, PUSH_BINARY_SENSORS
+from .pushmap import MOTION_EVENTS, PUSH_AUTO_OFF_SECONDS, PUSH_BINARY_SENSORS
 
 if TYPE_CHECKING:
     from homeassistant.core import Event, HomeAssistant
@@ -61,9 +61,15 @@ async def async_setup_entry(
         caps = set(dev.get("capabilities", []))
         for bus_event, (key, name, device_class, cap) in PUSH_BINARY_SENSORS.items():
             if cap in caps:
+                # Motion is an umbrella over all visual detections (these cams classify
+                # motion as person/vehicle/… and may never emit a bare "motion"); others
+                # match just their own event.
+                events = (
+                    MOTION_EVENTS if bus_event == "motion" else frozenset({bus_event})
+                )
                 entities.append(
                     EufyPushBinarySensor(
-                        coordinator, sn, bus_event, (key, name, device_class)
+                        coordinator, sn, events, (key, name, device_class)
                     )
                 )
     # A "Streaming" sensor per camera: ON while the bridge holds a live P2P feed
@@ -106,13 +112,13 @@ class EufyPushBinarySensor(EufySdkDeviceEntity, BinarySensorEntity):
         self,
         coordinator: EufySdkDataUpdateCoordinator,
         sn: str,
-        bus_event: str,
+        events: frozenset[str],
         spec: tuple[str, str, BinarySensorDeviceClass],
     ) -> None:
-        """Bind to one push event name (e.g. 'motion') for this device."""
+        """Bind to the push event(s) that flip this sensor on for this device."""
         super().__init__(coordinator, sn)
         key, name, device_class = spec
-        self._bus_event = bus_event
+        self._events = events
         self._attr_unique_id = f"{sn}_{key}"
         self._attr_name = name
         self._attr_device_class = device_class
@@ -135,7 +141,7 @@ class EufyPushBinarySensor(EufySdkDeviceEntity, BinarySensorEntity):
     def _handle_event(self, event: Event) -> None:
         """Turn ON for this device's matching push event and (re)arm the auto-off."""
         data = event.data
-        if data.get("deviceSn") != self._sn or data.get("event") != self._bus_event:
+        if data.get("deviceSn") != self._sn or data.get("event") not in self._events:
             return
         self._attr_is_on = True
         self._cancel_timer()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from http import HTTPStatus
 from typing import TYPE_CHECKING
@@ -73,6 +74,11 @@ class EufySdkEventImage(EufySdkDeviceEntity, ImageEntity):
         self._url = f"http://{host}:{port}/event-image/{sn}"
         self._image: bytes | None = None
         self._hash: str | None = None
+        # A detection push and the eventImageUpdated nudge both trigger a refresh.
+        # Without this the two fetches race: an earlier fetch of the OLD bytes can
+        # finish last and overwrite the new image while stamping a fresh time (time
+        # moves, picture stale). Serialise so the last write is always the newest fetch.
+        self._refresh_lock = asyncio.Lock()
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to bridge events and pull any already-retained thumbnail."""
@@ -107,17 +113,23 @@ class EufySdkEventImage(EufySdkDeviceEntity, ImageEntity):
         super()._handle_coordinator_update()
 
     async def _refresh(self) -> None:
-        """Fetch the retained thumbnail; stamp a new time only when the bytes change."""
-        data = await self._fetch()
-        if data is None:
-            return
-        digest = hashlib.sha1(data, usedforsecurity=False).hexdigest()
-        if digest == self._hash:
-            return
-        self._image = data
-        self._hash = digest
-        self._attr_image_last_updated = dt_util.utcnow()
-        self.async_write_ha_state()
+        """
+        Fetch the retained thumbnail; stamp a new time only when the bytes change.
+
+        Serialised: concurrent refreshes (detection + nudge) must not interleave, or an
+        old-bytes fetch that finishes last would clobber the new one.
+        """
+        async with self._refresh_lock:
+            data = await self._fetch()
+            if data is None:
+                return
+            digest = hashlib.sha1(data, usedforsecurity=False).hexdigest()
+            if digest == self._hash:
+                return
+            self._image = data
+            self._hash = digest
+            self._attr_image_last_updated = dt_util.utcnow()
+            self.async_write_ha_state()
 
     async def _fetch(self) -> bytes | None:
         """GET the retained thumbnail bytes from the bridge, or None if unavailable."""
