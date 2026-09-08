@@ -96,13 +96,14 @@ class EufySdkSmartLight(EufySdkDeviceEntity, LightEntity):
         super().__init__(coordinator, sn)
         self._attr_unique_id = f"{sn}_light"
         self._rgb: tuple[int, int, int] = (255, 255, 255)
-        # Effect gallery (shared, fetched once). Map name<->id for the HA effect picker.
-        self._effect_by_name: dict[str, int] = {
-            e["name"]: e["id"] for e in effects if e.get("name")
-        }
-        self._name_by_id: dict[int, str] = {
-            e["id"]: e["name"] for e in effects if e.get("name")
-        }
+        # Effect gallery (shared, fetched once). Build both directions in one pass.
+        self._effect_by_name: dict[str, int] = {}
+        self._name_by_id: dict[int, str] = {}
+        for e in effects:
+            name = e.get("name")
+            if name:
+                self._effect_by_name[name] = e["id"]
+                self._name_by_id[e["id"]] = name
         if self._effect_by_name:
             self._attr_supported_features = LightEntityFeature.EFFECT
             self._attr_effect_list = sorted(self._effect_by_name)
