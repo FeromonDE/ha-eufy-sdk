@@ -43,10 +43,11 @@ BRIGHTNESS = "lightBrightness"  # 0..100 on the wire; HA brightness is 0..255
 RUNNING_EFFECT = "lightCloudEffectId"  # the effect actually playing (0 = none)
 # Props this platform owns, so the generic switch/number platforms skip them.
 LIGHT_OWNED_PROPS = frozenset({POWER, BRIGHTNESS})
-# Read-only effect internals the light's effect picker + "Light Effect" name sensor already
-# represent — hidden from the generic sensor platform so smart_light gets no bare-number
-# effect-id / effect-mode sensors.
-LIGHT_HIDDEN_PROPS = frozenset({"lightEffectId", "lightCloudEffectId", "lightEffectMode"})
+# Read-only effect internals now shown by name (effect picker + "Light Effect" sensor) —
+# hidden from the generic sensor platform so smart_light gets no bare-number sensors.
+LIGHT_HIDDEN_PROPS = frozenset(
+    {"lightEffectId", "lightCloudEffectId", "lightEffectMode"}
+)
 
 
 async def async_setup_entry(
