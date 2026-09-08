@@ -44,6 +44,21 @@ DETECTION_EVENTS: dict[str, str] = {
     "packageStranded": "package_stranded",
 }
 
+# The Motion binary_sensor is an UMBRELLA: AI cameras/doorbells classify their motion
+# as person/vehicle/pet/… and may never emit a bare "motion", so any of these VISUAL
+# detections flips Motion on (and HA's motion.detected trigger with it). Excludes
+# sound/crying (audio) and package (a state), which aren't movement.
+MOTION_EVENTS: frozenset[str] = frozenset(
+    {
+        "motion",
+        "personDetected",
+        "vehicleDetected",
+        "petDetection",
+        "dogDetected",
+        "strangerDetected",
+    }
+)
+
 # A doorbell press is its own event entity (device_class DOORBELL).
 DOORBELL_EVENT = "doorbellPress"
 DOORBELL_EVENT_TYPE = "pressed"
