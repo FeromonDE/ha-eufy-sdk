@@ -18,13 +18,16 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
+    ATTR_EFFECT,
     ATTR_RGB_COLOR,
     ColorMode,
     LightEntity,
+    LightEntityFeature,
 )
 from homeassistant.core import callback
 from homeassistant.helpers.event import async_call_later
 
+from .const import LOGGER
 from .entity import POST_WRITE_REFRESH_SECS, EufySdkDeviceEntity
 
 if TYPE_CHECKING:
@@ -37,6 +40,7 @@ if TYPE_CHECKING:
 # smart_light state keys owned by this entity (see the SDK `smart_light` capability).
 POWER = "lightPower"
 BRIGHTNESS = "lightBrightness"  # 0..100 on the wire; HA brightness is 0..255
+RUNNING_EFFECT = "lightCloudEffectId"  # the effect actually playing (0 = none)
 # Props this platform owns, so the generic switch/number platforms skip them.
 LIGHT_OWNED_PROPS = frozenset({POWER, BRIGHTNESS})
 
@@ -48,10 +52,25 @@ async def async_setup_entry(
 ) -> None:
     """Create one light per device that has the `smart_light` capability."""
     coordinator = entry.runtime_data.coordinator
-    async_add_entities(
-        EufySdkSmartLight(coordinator, sn)
+    smart_lights = [
+        sn
         for sn, dev in coordinator.data.items()
         if "smart_light" in set(dev.get("capabilities", []))
+    ]
+    if not smart_lights:
+        return
+    # Fetch the effect gallery once (account-wide, bridge-cached), shared across lights.
+    # Best-effort: an old bridge without `light.effects` or a fetch error = no effects.
+    effects: list[dict] = []
+    try:
+        effects = await entry.runtime_data.client.list_effects()
+    except Exception:  # noqa: BLE001 - effects are optional; on/off/brightness/colour still work
+        LOGGER.debug(
+            "light effect catalogue unavailable; lights get no effect list",
+            exc_info=True,
+        )
+    async_add_entities(
+        EufySdkSmartLight(coordinator, sn, effects) for sn in smart_lights
     )
 
 
@@ -62,11 +81,27 @@ class EufySdkSmartLight(EufySdkDeviceEntity, LightEntity):
     _attr_supported_color_modes: ClassVar[set[ColorMode]] = {ColorMode.RGB}
     _attr_color_mode = ColorMode.RGB
 
-    def __init__(self, coordinator: EufySdkDataUpdateCoordinator, sn: str) -> None:
+    def __init__(
+        self,
+        coordinator: EufySdkDataUpdateCoordinator,
+        sn: str,
+        effects: list[dict],
+    ) -> None:
         """Bind to a smart-light serial; start colour at white until one is set."""
         super().__init__(coordinator, sn)
         self._attr_unique_id = f"{sn}_light"
         self._rgb: tuple[int, int, int] = (255, 255, 255)
+        # Effect gallery (shared, fetched once). Map name<->id for the HA effect picker.
+        self._effect_by_name: dict[str, int] = {
+            e["name"]: e["id"] for e in effects if e.get("name")
+        }
+        self._name_by_id: dict[int, str] = {
+            e["id"]: e["name"] for e in effects if e.get("name")
+        }
+        if self._effect_by_name:
+            self._attr_supported_features = LightEntityFeature.EFFECT
+            self._attr_effect_list = sorted(self._effect_by_name)
+        self._assumed_effect: str | None = None
         # Optimistic holds until the delayed reconcile — the wire is push, not polled.
         self._assumed_on: bool | None = None
         self._assumed_pct: int | None = None
@@ -101,12 +136,27 @@ class EufySdkSmartLight(EufySdkDeviceEntity, LightEntity):
         """The last colour we set — the device reports none back."""
         return self._rgb
 
+    @property
+    def effect(self) -> str | None:
+        """The running effect's name (None when a plain colour is set, or off)."""
+        if self._assumed_effect is not None:
+            return self._assumed_effect or None
+        rid = self._state.get(RUNNING_EFFECT)
+        if isinstance(rid, (int, float)) and int(rid) in self._name_by_id:
+            return self._name_by_id[int(rid)]
+        return None
+
     async def async_turn_on(self, **kwargs: Any) -> None:
-        """Apply colour/brightness if given, then ensure power on."""
+        """Apply effect/colour/brightness if given, then ensure power on."""
         client = self.coordinator.config_entry.runtime_data.client
+        if ATTR_EFFECT in kwargs and kwargs[ATTR_EFFECT] in self._effect_by_name:
+            name = kwargs[ATTR_EFFECT]
+            self._assumed_effect = name
+            await client.action(self._sn, "setEffect", self._effect_by_name[name])
         if ATTR_RGB_COLOR in kwargs:
             r, g, b = (int(c) for c in kwargs[ATTR_RGB_COLOR])
             self._rgb = (r, g, b)
+            self._assumed_effect = ""  # a plain colour stops any running effect
             await client.action(self._sn, "setColor", {"red": r, "green": g, "blue": b})
         if ATTR_BRIGHTNESS in kwargs:
             pct = round(kwargs[ATTR_BRIGHTNESS] * 100 / 255)
@@ -139,6 +189,7 @@ class EufySdkSmartLight(EufySdkDeviceEntity, LightEntity):
         self._refresh_unsub = None
         self._assumed_on = None
         self._assumed_pct = None
+        self._assumed_effect = None
         self.hass.async_create_task(self.coordinator.async_request_refresh())
         self.async_write_ha_state()
 

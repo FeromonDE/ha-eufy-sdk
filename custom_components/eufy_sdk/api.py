@@ -210,6 +210,16 @@ class EufySdkApiClient:
         """Set the cloud poll interval (ms); returns the new effective value."""
         return (await self.rpc("config.set", pollMs=poll_ms))["pollMs"]
 
+    async def list_effects(self) -> list[dict[str, Any]]:
+        """
+        Return the smart-light effect gallery ({id, name, colors}) for effect_list.
+
+        Account-wide and cached by the bridge; the first call enumerates the catalogue
+        over several HTTP round-trips, hence the longer timeout.
+        """
+        reply = await self.rpc("light.effects", timeout=60)
+        return reply.get("effects", [])
+
     async def action(self, sn: str, action: str, *args: Any) -> Any:
         """
         Invoke a capability action (a typed method, not a scalar property) on a device.
