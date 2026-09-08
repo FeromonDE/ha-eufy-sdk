@@ -15,6 +15,7 @@ from homeassistant.core import callback
 from .bespoke import BITFIELD_SWITCHES
 from .const import CONF_HOST, DOMAIN
 from .entity import EufySdkDeviceEntity, EufySdkPropertyEntity, classify
+from .light import LIGHT_HIDDEN_PROPS
 
 if TYPE_CHECKING:
     from homeassistant.core import Event, HomeAssistant
@@ -50,6 +51,11 @@ async def async_setup_entry(
         for sn in coordinator.data
         for spec in entry.runtime_data.properties.get(sn, [])
         if _is_sensor(spec)
+        # A smart_light's effect internals are represented by the light's effect picker.
+        and not (
+            spec["name"] in LIGHT_HIDDEN_PROPS
+            and "smart_light" in set(coordinator.data[sn].get("capabilities", []))
+        )
     )
     # A "Last person" sensor for AI face recognition — surfaces the recognized name.
     entities.extend(
