@@ -13,7 +13,7 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import callback
 
 from .bespoke import BITFIELD_SWITCHES
-from .const import CONF_HOST, DOMAIN
+from .const import CONF_HOST, DOMAIN, LOGGER
 from .entity import EufySdkDeviceEntity, EufySdkPropertyEntity, classify
 from .light import LIGHT_HIDDEN_PROPS
 
@@ -70,6 +70,27 @@ async def async_setup_entry(
         for sn, dev in coordinator.data.items()
         if dev.get("stream")
     )
+    # A "Light Effect" sensor per smart_light — the selected effect BY NAME (from the
+    # gallery), not the raw id. Fetch the catalogue once (bridge-cached); on failure the
+    # sensor falls back to rendering the id as "Effect <n>".
+    smart_lights = [
+        sn
+        for sn, dev in coordinator.data.items()
+        if "smart_light" in set(dev.get("capabilities", []))
+    ]
+    if smart_lights:
+        name_by_id: dict[int, str] = {}
+        try:
+            for e in await entry.runtime_data.client.list_effects():
+                if e.get("name"):
+                    name_by_id[e["id"]] = e["name"]
+        except Exception:  # noqa: BLE001 - names are optional; the sensor falls back to the id
+            LOGGER.debug(
+                "effect names unavailable for Light Effect sensor", exc_info=True
+            )
+        entities.extend(
+            EufyLightEffectSensor(coordinator, sn, name_by_id) for sn in smart_lights
+        )
     async_add_entities(entities)
 
 
@@ -232,3 +253,30 @@ class EufyStreamUrlSensor(EufySdkDeviceEntity, SensorEntity):
         if not self._streaming and not rtsp_on:
             return None
         return f"rtsp://{self._host}:{GO2RTC_RTSP_PORT}/{self._sn}"
+
+
+class EufyLightEffectSensor(EufySdkDeviceEntity, SensorEntity):
+    """The smart-light's selected effect, by name (falls back to the raw id)."""
+
+    _attr_icon = "mdi:palette"
+
+    def __init__(
+        self,
+        coordinator: EufySdkDataUpdateCoordinator,
+        sn: str,
+        name_by_id: dict[int, str],
+    ) -> None:
+        """Bind to a smart-light serial with the effect id->name map."""
+        super().__init__(coordinator, sn)
+        self._name_by_id = name_by_id
+        self._attr_unique_id = f"{sn}_light_effect"
+        self._attr_name = "Light Effect"
+
+    @property
+    def native_value(self) -> str | None:
+        """The selected effect's name (`lightEffectId`), else `Effect <id>`."""
+        rid = self.device.get("state", {}).get("lightEffectId")
+        if not isinstance(rid, (int, float)):
+            return None
+        rid = int(rid)
+        return self._name_by_id.get(rid) or f"Effect {rid}"
