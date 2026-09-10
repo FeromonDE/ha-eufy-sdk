@@ -245,6 +245,12 @@ class EufySolixConnectivitySensor(
         return bool(self.coordinator.solix_devices.get(self._sn, {}).get("online"))
 
     @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """The connected network + signal, so you can see WHICH Wi-Fi it's on."""
+        dev = self.coordinator.solix_devices.get(self._sn, {})
+        return {"ssid": dev.get("ssid"), "rssi": dev.get("rssi")}
+
+    @property
     def available(self) -> bool:
         """Available while the bridge still lists this Solix device."""
         return super().available and self._sn in getattr(
