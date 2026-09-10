@@ -38,6 +38,7 @@ class EufySdkApiClient:
         port: int,
         session: aiohttp.ClientSession,
         on_event: Callable[[dict[str, Any]], None] | None = None,
+        on_reconnect: Callable[[], None] | None = None,
     ) -> None:
         """Store the bridge address; the connection is opened by `connect`."""
         # int() the port defensively: HA's NumberSelector yields a float, which
@@ -45,6 +46,10 @@ class EufySdkApiClient:
         self._url = f"ws://{host}:{int(port)}/ws"
         self._session = session
         self._on_event = on_event
+        # Called after the receive loop reconnects following a drop (e.g. a bridge
+        # restart), so the coordinator can refresh at once instead of leaving entities
+        # unavailable until the next poll.
+        self._on_reconnect = on_reconnect
         self._ws: aiohttp.ClientWebSocketResponse | None = None
         self._recv_task: asyncio.Task | None = None
         self._reconnect_task: asyncio.Task | None = None
@@ -139,6 +144,10 @@ class EufySdkApiClient:
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, 60)
             else:
+                # Back up after a drop — let the coordinator recover entities now, not
+                # at the next poll.
+                if self._on_reconnect:
+                    self._on_reconnect()
                 return
 
     async def rpc(
@@ -193,6 +202,11 @@ class EufySdkApiClient:
         """Force a 'Last event' image refresh; returns True if a newer image landed."""
         return bool((await self.rpc("event.refresh", sn=sn)).get("changed"))
 
+    async def list_solix_devices(self) -> list[dict[str, Any]]:
+        """Return the Anker Solix devices (empty if Solix isn't configured)."""
+        # Each: {sn, productCode, name, category, capabilities, values, firmware}.
+        return (await self.rpc("solix.devices")).get("devices", [])
+
     async def get_properties(self, sn: str) -> list[dict[str, Any]]:
         """Return a device's property manifest (name/type/unit/writable/enumValues)."""
         return (await self.rpc("device.properties", sn=sn))["properties"]
@@ -204,6 +218,26 @@ class EufySdkApiClient:
     async def set_poll_ms(self, poll_ms: int) -> int:
         """Set the cloud poll interval (ms); returns the new effective value."""
         return (await self.rpc("config.set", pollMs=poll_ms))["pollMs"]
+
+    async def list_effects(self) -> list[dict[str, Any]]:
+        """
+        Return the smart-light effect gallery ({id, name, colors}) for effect_list.
+
+        Account-wide and cached by the bridge; the first call enumerates the catalogue
+        over several HTTP round-trips, hence the longer timeout.
+        """
+        reply = await self.rpc("light.effects", timeout=60)
+        return reply.get("effects", [])
+
+    async def action(self, sn: str, action: str, *args: Any) -> Any:
+        """
+        Invoke a capability action (a typed method, not a scalar property) on a device.
+
+        e.g. smart_light `setColor({red,green,blue})` / `setEffect(id)` — controls that
+        `set_property` can't reach because they take structured arguments.
+        """
+        reply = await self.rpc("device.action", sn=sn, action=action, args=list(args))
+        return reply.get("result")
 
     async def set_property(self, sn: str, name: str, value: Any) -> None:
         """Write a device property."""

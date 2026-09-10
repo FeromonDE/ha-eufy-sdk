@@ -8,18 +8,21 @@ from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
 )
+from homeassistant.const import EntityCategory
 from homeassistant.core import callback
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.event import async_call_later
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
+from .coordinator import EufySdkDataUpdateCoordinator
 from .entity import EufySdkDeviceEntity, EufySdkPropertyEntity, classify
-from .pushmap import PUSH_AUTO_OFF_SECONDS, PUSH_BINARY_SENSORS
+from .pushmap import MOTION_EVENTS, PUSH_AUTO_OFF_SECONDS, PUSH_BINARY_SENSORS
 
 if TYPE_CHECKING:
     from homeassistant.core import Event, HomeAssistant
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-    from .coordinator import EufySdkDataUpdateCoordinator
     from .data import EufySdkConfigEntry
 
 EVENT_TYPE = f"{DOMAIN}_event"
@@ -61,9 +64,15 @@ async def async_setup_entry(
         caps = set(dev.get("capabilities", []))
         for bus_event, (key, name, device_class, cap) in PUSH_BINARY_SENSORS.items():
             if cap in caps:
+                # Motion is an umbrella over all visual detections (these cams classify
+                # motion as person/vehicle/… and may never emit a bare "motion"); others
+                # match just their own event.
+                events = (
+                    MOTION_EVENTS if bus_event == "motion" else frozenset({bus_event})
+                )
                 entities.append(
                     EufyPushBinarySensor(
-                        coordinator, sn, bus_event, (key, name, device_class)
+                        coordinator, sn, events, (key, name, device_class)
                     )
                 )
     # A "Streaming" sensor per camera: ON while the bridge holds a live P2P feed
@@ -73,6 +82,13 @@ async def async_setup_entry(
         EufyStreamingBinarySensor(coordinator, sn)
         for sn, dev in coordinator.data.items()
         if dev.get("stream")
+    )
+    # Anker Solix (separate account): a Wi-Fi connectivity sensor per device (polled).
+    solix = getattr(coordinator, "solix_devices", {}) or {}
+    entities.extend(
+        EufySolixConnectivitySensor(coordinator, sn)
+        for sn, dev in solix.items()
+        if "connectivity" in dev.get("capabilities", [])
     )
     async_add_entities(entities)
 
@@ -106,13 +122,13 @@ class EufyPushBinarySensor(EufySdkDeviceEntity, BinarySensorEntity):
         self,
         coordinator: EufySdkDataUpdateCoordinator,
         sn: str,
-        bus_event: str,
+        events: frozenset[str],
         spec: tuple[str, str, BinarySensorDeviceClass],
     ) -> None:
-        """Bind to one push event name (e.g. 'motion') for this device."""
+        """Bind to the push event(s) that flip this sensor on for this device."""
         super().__init__(coordinator, sn)
         key, name, device_class = spec
-        self._bus_event = bus_event
+        self._events = events
         self._attr_unique_id = f"{sn}_{key}"
         self._attr_name = name
         self._attr_device_class = device_class
@@ -135,7 +151,7 @@ class EufyPushBinarySensor(EufySdkDeviceEntity, BinarySensorEntity):
     def _handle_event(self, event: Event) -> None:
         """Turn ON for this device's matching push event and (re)arm the auto-off."""
         data = event.data
-        if data.get("deviceSn") != self._sn or data.get("event") != self._bus_event:
+        if data.get("deviceSn") != self._sn or data.get("event") not in self._events:
             return
         self._attr_is_on = True
         self._cancel_timer()
@@ -190,3 +206,53 @@ class EufyStreamingBinarySensor(EufySdkDeviceEntity, BinarySensorEntity):
         if self._active is not None:
             return self._active
         return bool(self.device.get("streaming"))
+
+
+class EufySolixConnectivitySensor(
+    CoordinatorEntity[EufySdkDataUpdateCoordinator], BinarySensorEntity
+):
+    """
+    Wi-Fi connectivity for an Anker Solix device (from the polled device snapshot).
+
+    A CoordinatorEntity so it refreshes on the device-list poll (connectivity comes from
+    the snapshot, not the telemetry event stream). Its HA device matches the Solix
+    sensors (`solix:<sn>`).
+    """
+
+    _attr_has_entity_name = True
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: EufySdkDataUpdateCoordinator, sn: str) -> None:
+        """Bind to a Solix serial; build its Anker Solix device_info."""
+        super().__init__(coordinator)
+        self._sn = sn
+        dev = coordinator.solix_devices.get(sn, {})
+        self._attr_unique_id = f"solix_{sn}_connectivity"
+        self._attr_name = "Connectivity"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"solix:{sn}")},
+            name=dev.get("name") or sn,
+            manufacturer="Anker Solix",
+            model=dev.get("productCode"),
+            sw_version=dev.get("firmware"),
+            serial_number=sn,
+        )
+
+    @property
+    def is_on(self) -> bool:
+        """True while the device reports Wi-Fi online."""
+        return bool(self.coordinator.solix_devices.get(self._sn, {}).get("online"))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """The connected network + signal, so you can see WHICH Wi-Fi it's on."""
+        dev = self.coordinator.solix_devices.get(self._sn, {})
+        return {"ssid": dev.get("ssid"), "rssi": dev.get("rssi")}
+
+    @property
+    def available(self) -> bool:
+        """Available while the bridge still lists this Solix device."""
+        return super().available and self._sn in getattr(
+            self.coordinator, "solix_devices", {}
+        )

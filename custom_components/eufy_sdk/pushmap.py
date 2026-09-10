@@ -23,10 +23,18 @@ PUSH_BINARY_SENSORS: dict[str, tuple[str, str, BinarySensorDeviceClass, str]] = 
     ),
 }
 
-# Discrete push events surfaced on a per-device "Detection" event entity.
+# Push events surfaced on a per-device "Detection" event entity. This is a CATCH-ALL: it
+# fires on whatever eufy reported — person, pet, vehicle, dog, … — so the Detection
+# entity's timeline matches what advanced "Last event". `motion` and `personDetected`
+# are ALSO auto-off binary_sensors above (PUSH_BINARY_SENSORS); listing them here too is
+# intentional — the binary_sensor is the current on/off state, the event entity is the
+# discrete "something was detected" occurrence.
 # bus event name -> HA event_type
 DETECTION_EVENTS: dict[str, str] = {
+    "motion": "motion",
+    "personDetected": "person",
     "petDetection": "pet",
+    "dogDetected": "dog",
     "vehicleDetected": "vehicle",
     "strangerDetected": "stranger",
     "soundDetected": "sound",
@@ -35,6 +43,21 @@ DETECTION_EVENTS: dict[str, str] = {
     "packageTaken": "package_taken",
     "packageStranded": "package_stranded",
 }
+
+# The Motion binary_sensor is an UMBRELLA: AI cameras/doorbells classify their motion
+# as person/vehicle/pet/… and may never emit a bare "motion", so any of these VISUAL
+# detections flips Motion on (and HA's motion.detected trigger with it). Excludes
+# sound/crying (audio) and package (a state), which aren't movement.
+MOTION_EVENTS: frozenset[str] = frozenset(
+    {
+        "motion",
+        "personDetected",
+        "vehicleDetected",
+        "petDetection",
+        "dogDetected",
+        "strangerDetected",
+    }
+)
 
 # A doorbell press is its own event entity (device_class DOORBELL).
 DOORBELL_EVENT = "doorbellPress"

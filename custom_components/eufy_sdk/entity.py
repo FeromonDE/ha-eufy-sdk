@@ -60,6 +60,11 @@ def label_for(prop: str) -> str:
     return spaced[:1].upper() + spaced[1:]
 
 
+def has_capability(record: dict | None, capability: str) -> bool:
+    """Whether a device record (from the bridge device list) declares a capability."""
+    return capability in (record or {}).get("capabilities", [])
+
+
 # Properties that stay a PRIMARY control (no entity_category), so they sit in the
 # device's main Controls area rather than under Configuration. Everything else writable
 # is a setting — the old eufy integration kept only enable/disable up top.
