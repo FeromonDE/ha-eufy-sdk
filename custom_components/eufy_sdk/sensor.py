@@ -11,6 +11,7 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import EntityCategory
 from homeassistant.core import callback
+from homeassistant.helpers.device_registry import DeviceInfo
 
 from .bespoke import BITFIELD_SWITCHES
 from .const import CONF_HOST, DOMAIN, LOGGER
@@ -31,6 +32,44 @@ if TYPE_CHECKING:
 
 EVENT_TYPE = f"{DOMAIN}_event"
 GO2RTC_RTSP_PORT = 8554  # go2rtc RTSP listener in the bridge image
+
+# Anker Solix telemetry metrics we can name today. gridVoltage is confirmed live; add
+# gridPower (W) / current (A) / energy (Wh) here once their channels are correlated
+# under load; the sensor machinery below is generic over this map (one-line add each).
+SOLIX_METRICS: dict[str, dict[str, Any]] = {
+    "gridVoltage": {
+        "name": "Grid Voltage",
+        "device_class": SensorDeviceClass.VOLTAGE,
+        "unit": "V",
+        "icon": "mdi:sine-wave",
+        "precision": 2,  # the meter reports float32 (236.8999…); show 2 dp
+    },
+}
+
+# Raw float32 measurement channels the meter reports, exposed as DIAGNOSTIC sensors so
+# the CT/grid readings are visible before each is named. `ac` is omitted (it's
+# gridVoltage, already named above). Once a load test identifies power/current/energy,
+# they graduate into SOLIX_METRICS and drop off this list.
+SOLIX_METER_RAW_CHANNELS = [
+    f"channel_{tag}"
+    for tag in (
+        "a8",
+        "a9",
+        "aa",
+        "ab",
+        "ad",
+        "ae",
+        "af",
+        "b0",
+        "b1",
+        "b2",
+        "b3",
+        "b4",
+        "b5",
+        "b6",
+        "b7",
+    )
+]
 
 
 def _is_sensor(spec: dict) -> bool:
@@ -94,6 +133,25 @@ async def async_setup_entry(
         entities.extend(
             EufyLightEffectSensor(coordinator, sn, name_by_id) for sn in smart_lights
         )
+    # Anker Solix (separate account): a sensor per known metric on each energy-meter
+    # device. Live values arrive as `solixReading` events; the eufy platforms never see
+    # these (kept off `data`).
+    solix = getattr(coordinator, "solix_devices", {}) or {}
+    energy_meters = [
+        sn for sn, dev in solix.items() if "energyMeter" in dev.get("capabilities", [])
+    ]
+    entities.extend(
+        EufySolixSensor(coordinator, sn, metric, meta)
+        for sn in energy_meters
+        for metric, meta in SOLIX_METRICS.items()
+    )
+    # Raw CT/measurement channels as diagnostics — visible for the load-correlation
+    # step, until each is named. Disabled by default so they don't clutter.
+    entities.extend(
+        EufySolixChannelSensor(coordinator, sn, channel)
+        for sn in energy_meters
+        for channel in SOLIX_METER_RAW_CHANNELS
+    )
     async_add_entities(entities)
 
 
@@ -283,3 +341,141 @@ class EufyLightEffectSensor(EufySdkDeviceEntity, SensorEntity):
             return None
         rid = int(rid)
         return self._name_by_id.get(rid) or f"Effect {rid}"
+
+
+class EufySolixSensor(SensorEntity):
+    """
+    A live telemetry sensor for an Anker Solix device.
+
+    Solix is a separate account/backend, so these are NOT coordinator (device-list)
+    entities: the initial value seeds from the bridge's `solix.devices` snapshot, and
+    updates arrive as `solixReading` events. Their HA device is distinct from any eufy
+    device (identifier `solix:<sn>`).
+    """
+
+    _attr_has_entity_name = True
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(
+        self,
+        coordinator: EufySdkDataUpdateCoordinator,
+        sn: str,
+        metric: str,
+        meta: dict[str, Any],
+    ) -> None:
+        """Bind to one (device, metric); build its Anker Solix HA device_info."""
+        self._coordinator = coordinator
+        self._sn = sn
+        self._metric = metric
+        dev = coordinator.solix_devices.get(sn, {})
+        self._value = (dev.get("values") or {}).get(metric)
+        self._attr_unique_id = f"solix_{sn}_{metric}"
+        self._attr_name = meta["name"]
+        self._attr_native_unit_of_measurement = meta.get("unit")
+        if meta.get("device_class"):
+            self._attr_device_class = meta["device_class"]
+        if meta.get("icon"):
+            self._attr_icon = meta["icon"]
+        if meta.get("precision") is not None:
+            self._attr_suggested_display_precision = meta["precision"]
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"solix:{sn}")},
+            name=dev.get("name") or sn,
+            manufacturer="Anker Solix",
+            model=dev.get("productCode"),
+            sw_version=dev.get("firmware"),
+            serial_number=sn,
+        )
+
+    @property
+    def native_value(self) -> float | int | None:
+        """The latest value for this metric (None until a reading arrives)."""
+        return self._value
+
+    @property
+    def available(self) -> bool:
+        """Available while the bridge still lists this Solix device."""
+        return self._sn in getattr(self._coordinator, "solix_devices", {})
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to bridge events for live `solixReading` updates."""
+        await super().async_added_to_hass()
+        self.async_on_remove(self.hass.bus.async_listen(EVENT_TYPE, self._handle_event))
+
+    @callback
+    def _handle_event(self, event: Event) -> None:
+        """Update from a `solixReading` for this device that carries our metric."""
+        data = event.data
+        if data.get("event") != "solixReading" or data.get("deviceSn") != self._sn:
+            return
+        values = data.get("values") or {}
+        if self._metric in values:
+            self._value = values[self._metric]
+            self.async_write_ha_state()
+
+
+class EufySolixChannelSensor(SensorEntity):
+    """
+    A raw Solix telemetry channel (diagnostic, disabled by default).
+
+    Exists so the meter's CT/measurement channels are visible for the load-correlation
+    step — turn on a known load and watch which channel tracks it, then it graduates
+    into SOLIX_METRICS as a named Power/Current/Energy sensor. No device_class or unit,
+    since what the channel measures isn't known until it's correlated.
+    """
+
+    _attr_has_entity_name = True
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
+    _attr_suggested_display_precision = 2
+
+    def __init__(
+        self,
+        coordinator: EufySdkDataUpdateCoordinator,
+        sn: str,
+        channel: str,
+    ) -> None:
+        """Bind to one (device, channel_<tag>)."""
+        self._coordinator = coordinator
+        self._sn = sn
+        self._channel = channel
+        dev = coordinator.solix_devices.get(sn, {})
+        self._value = (dev.get("values") or {}).get(channel)
+        self._attr_unique_id = f"solix_{sn}_{channel}"
+        # "channel_a8" -> "Channel A8"
+        self._attr_name = f"Channel {channel.removeprefix('channel_').upper()}"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"solix:{sn}")},
+            name=dev.get("name") or sn,
+            manufacturer="Anker Solix",
+            model=dev.get("productCode"),
+            sw_version=dev.get("firmware"),
+            serial_number=sn,
+        )
+
+    @property
+    def native_value(self) -> float | int | None:
+        """The channel's latest raw value (None until a reading arrives)."""
+        return self._value
+
+    @property
+    def available(self) -> bool:
+        """Available while the bridge still lists this Solix device."""
+        return self._sn in getattr(self._coordinator, "solix_devices", {})
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to bridge events for live channel updates."""
+        await super().async_added_to_hass()
+        self.async_on_remove(self.hass.bus.async_listen(EVENT_TYPE, self._handle_event))
+
+    @callback
+    def _handle_event(self, event: Event) -> None:
+        """Update from a `solixReading` for this device that carries our channel."""
+        data = event.data
+        if data.get("event") != "solixReading" or data.get("deviceSn") != self._sn:
+            return
+        values = data.get("values") or {}
+        if self._channel in values:
+            self._value = values[self._channel]
+            self.async_write_ha_state()

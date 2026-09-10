@@ -198,6 +198,11 @@ class EufySdkApiClient:
         """Every device the bridge exposes (sn/name/model/codec/capabilities/state)."""
         return (await self.rpc("devices.list"))["devices"]
 
+    async def list_solix_devices(self) -> list[dict[str, Any]]:
+        """Return the Anker Solix devices (empty if Solix isn't configured)."""
+        # Each: {sn, productCode, name, category, capabilities, values, firmware}.
+        return (await self.rpc("solix.devices")).get("devices", [])
+
     async def get_properties(self, sn: str) -> list[dict[str, Any]]:
         """Return a device's property manifest (name/type/unit/writable/enumValues)."""
         return (await self.rpc("device.properties", sn=sn))["properties"]

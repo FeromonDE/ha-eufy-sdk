@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -17,6 +17,13 @@ class EufySdkDataUpdateCoordinator(DataUpdateCoordinator[dict[str, dict]]):
     """Keep the bridge connected and expose the device list as `{sn: device}`."""
 
     config_entry: EufySdkConfigEntry
+
+    # Anker Solix devices (separate account/backend), kept apart from the eufy `data`
+    # so the eufy platforms never iterate them: `{sn: {productCode, name, category,
+    # capabilities, values, ...}}`. Empty unless the bridge has SOLIX_* configured;
+    # reassigned per-update, so the class-level {} is only an initial fallback. Live
+    # values arrive via `solixReading` events.
+    solix_devices: ClassVar[dict[str, dict]] = {}
 
     async def _async_update_data(self) -> dict[str, dict]:
         """Ensure the connection is up, confirm we're authed, and return the devices."""
@@ -41,4 +48,10 @@ class EufySdkDataUpdateCoordinator(DataUpdateCoordinator[dict[str, dict]]):
             raise ConfigEntryAuthFailed(err) from err
         except EufySdkApiClientError as err:
             raise UpdateFailed(err) from err
+        # Solix is optional + independent: a hiccup must not fail the eufy update.
+        try:
+            solix = await client.list_solix_devices()
+            self.solix_devices = {d["sn"]: d for d in solix if d.get("sn")}
+        except EufySdkApiClientError:
+            self.solix_devices = getattr(self, "solix_devices", {})
         return {d["sn"]: d for d in devices if d.get("sn")}
