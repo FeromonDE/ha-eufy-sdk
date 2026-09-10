@@ -46,6 +46,31 @@ SOLIX_METRICS: dict[str, dict[str, Any]] = {
     },
 }
 
+# Raw float32 measurement channels the meter reports, exposed as DIAGNOSTIC sensors so
+# the CT/grid readings are visible before each is named. `ac` is omitted (it's
+# gridVoltage, already named above). Once a load test identifies power/current/energy,
+# they graduate into SOLIX_METRICS and drop off this list.
+SOLIX_METER_RAW_CHANNELS = [
+    f"channel_{tag}"
+    for tag in (
+        "a8",
+        "a9",
+        "aa",
+        "ab",
+        "ad",
+        "ae",
+        "af",
+        "b0",
+        "b1",
+        "b2",
+        "b3",
+        "b4",
+        "b5",
+        "b6",
+        "b7",
+    )
+]
+
 
 def _is_sensor(spec: dict) -> bool:
     """Return True for classify()=="sensor", plus bitfields with no bespoke switches."""
@@ -112,11 +137,20 @@ async def async_setup_entry(
     # device. Live values arrive as `solixReading` events; the eufy platforms never see
     # these (kept off `data`).
     solix = getattr(coordinator, "solix_devices", {}) or {}
+    energy_meters = [
+        sn for sn, dev in solix.items() if "energyMeter" in dev.get("capabilities", [])
+    ]
     entities.extend(
         EufySolixSensor(coordinator, sn, metric, meta)
-        for sn, dev in solix.items()
-        if "energyMeter" in dev.get("capabilities", [])
+        for sn in energy_meters
         for metric, meta in SOLIX_METRICS.items()
+    )
+    # Raw CT/measurement channels as diagnostics — visible for the load-correlation
+    # step, until each is named. Disabled by default so they don't clutter.
+    entities.extend(
+        EufySolixChannelSensor(coordinator, sn, channel)
+        for sn in energy_meters
+        for channel in SOLIX_METER_RAW_CHANNELS
     )
     async_add_entities(entities)
 
@@ -376,4 +410,70 @@ class EufySolixSensor(SensorEntity):
         values = data.get("values") or {}
         if self._metric in values:
             self._value = values[self._metric]
+            self.async_write_ha_state()
+
+
+class EufySolixChannelSensor(SensorEntity):
+    """
+    A raw Solix telemetry channel (diagnostic, disabled by default).
+
+    Exists so the meter's CT/measurement channels are visible for the load-correlation
+    step — turn on a known load and watch which channel tracks it, then it graduates
+    into SOLIX_METRICS as a named Power/Current/Energy sensor. No device_class or unit,
+    since what the channel measures isn't known until it's correlated.
+    """
+
+    _attr_has_entity_name = True
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
+    _attr_suggested_display_precision = 2
+
+    def __init__(
+        self,
+        coordinator: EufySdkDataUpdateCoordinator,
+        sn: str,
+        channel: str,
+    ) -> None:
+        """Bind to one (device, channel_<tag>)."""
+        self._coordinator = coordinator
+        self._sn = sn
+        self._channel = channel
+        dev = coordinator.solix_devices.get(sn, {})
+        self._value = (dev.get("values") or {}).get(channel)
+        self._attr_unique_id = f"solix_{sn}_{channel}"
+        # "channel_a8" -> "Channel A8"
+        self._attr_name = f"Channel {channel.removeprefix('channel_').upper()}"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"solix:{sn}")},
+            name=dev.get("name") or sn,
+            manufacturer="Anker Solix",
+            model=dev.get("productCode"),
+            serial_number=sn,
+        )
+
+    @property
+    def native_value(self) -> float | int | None:
+        """The channel's latest raw value (None until a reading arrives)."""
+        return self._value
+
+    @property
+    def available(self) -> bool:
+        """Available while the bridge still lists this Solix device."""
+        return self._sn in getattr(self._coordinator, "solix_devices", {})
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to bridge events for live channel updates."""
+        await super().async_added_to_hass()
+        self.async_on_remove(self.hass.bus.async_listen(EVENT_TYPE, self._handle_event))
+
+    @callback
+    def _handle_event(self, event: Event) -> None:
+        """Update from a `solixReading` for this device that carries our channel."""
+        data = event.data
+        if data.get("event") != "solixReading" or data.get("deviceSn") != self._sn:
+            return
+        values = data.get("values") or {}
+        if self._channel in values:
+            self._value = values[self._channel]
             self.async_write_ha_state()
