@@ -383,6 +383,7 @@ class EufySolixSensor(SensorEntity):
             name=dev.get("name") or sn,
             manufacturer="Anker Solix",
             model=dev.get("productCode"),
+            sw_version=dev.get("firmware"),
             serial_number=sn,
         )
 
@@ -449,6 +450,7 @@ class EufySolixChannelSensor(SensorEntity):
             name=dev.get("name") or sn,
             manufacturer="Anker Solix",
             model=dev.get("productCode"),
+            sw_version=dev.get("firmware"),
             serial_number=sn,
         )
 
