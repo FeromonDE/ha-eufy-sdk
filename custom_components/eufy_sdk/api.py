@@ -189,6 +189,10 @@ class EufySdkApiClient:
         """Every device the bridge exposes (sn/name/model/codec/capabilities/state)."""
         return (await self.rpc("devices.list"))["devices"]
 
+    async def refresh_event_image(self, sn: str) -> bool:
+        """Force a 'Last event' image refresh; returns True if a newer image landed."""
+        return bool((await self.rpc("event.refresh", sn=sn)).get("changed"))
+
     async def get_properties(self, sn: str) -> list[dict[str, Any]]:
         """Return a device's property manifest (name/type/unit/writable/enumValues)."""
         return (await self.rpc("device.properties", sn=sn))["properties"]
