@@ -42,6 +42,7 @@ SOLIX_METRICS: dict[str, dict[str, Any]] = {
         "device_class": SensorDeviceClass.VOLTAGE,
         "unit": "V",
         "icon": "mdi:sine-wave",
+        "precision": 2,  # the meter reports float32 (236.8999…); show 2 dp
     },
 }
 
@@ -341,6 +342,8 @@ class EufySolixSensor(SensorEntity):
             self._attr_device_class = meta["device_class"]
         if meta.get("icon"):
             self._attr_icon = meta["icon"]
+        if meta.get("precision") is not None:
+            self._attr_suggested_display_precision = meta["precision"]
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"solix:{sn}")},
             name=dev.get("name") or sn,
