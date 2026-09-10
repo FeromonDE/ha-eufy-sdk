@@ -33,43 +33,125 @@ if TYPE_CHECKING:
 EVENT_TYPE = f"{DOMAIN}_event"
 GO2RTC_RTSP_PORT = 8554  # go2rtc RTSP listener in the bridge image
 
-# Anker Solix telemetry metrics we can name today. gridVoltage is confirmed live; add
-# gridPower (W) / current (A) / energy (Wh) here once their channels are correlated
-# under load; the sensor machinery below is generic over this map (one-line add each).
+# Anker Solix Smart Meter (AE1X0) telemetry metrics, keyed by the SDK's field names.
+# The meter is 3-phase-capable and reports each quantity per line (L1/L2/L3) plus a
+# total; `meterVoltageL1` is confirmed live, the rest are the app's own field names
+# bound by a structural-inference map in the SDK. On a single-phase / single-CT install
+# only L1 + totals carry data, so L2/L3 (and the not-yet-scale-confirmed energy
+# counters) ship disabled-by-default to keep the UI clean; a 3-phase user can enable
+# them. The sensor machinery below is generic over this map.
 SOLIX_METRICS: dict[str, dict[str, Any]] = {
-    "gridVoltage": {
-        "name": "Grid Voltage",
+    "meterVoltageL1": {
+        "name": "Voltage L1",
         "device_class": SensorDeviceClass.VOLTAGE,
         "unit": "V",
         "icon": "mdi:sine-wave",
-        "precision": 2,  # the meter reports float32 (236.8999…); show 2 dp
+        "precision": 2,  # float32 (236.8999…); show 2 dp
+    },
+    "meterVoltageL2": {
+        "name": "Voltage L2",
+        "device_class": SensorDeviceClass.VOLTAGE,
+        "unit": "V",
+        "icon": "mdi:sine-wave",
+        "precision": 2,
+        "enabled_default": False,
+    },
+    "meterVoltageL3": {
+        "name": "Voltage L3",
+        "device_class": SensorDeviceClass.VOLTAGE,
+        "unit": "V",
+        "icon": "mdi:sine-wave",
+        "precision": 2,
+        "enabled_default": False,
+    },
+    "meterCurrentL1": {
+        "name": "Current L1",
+        "device_class": SensorDeviceClass.CURRENT,
+        "unit": "A",
+        "icon": "mdi:current-ac",
+        "precision": 2,
+    },
+    "meterCurrentL2": {
+        "name": "Current L2",
+        "device_class": SensorDeviceClass.CURRENT,
+        "unit": "A",
+        "icon": "mdi:current-ac",
+        "precision": 2,
+        "enabled_default": False,
+    },
+    "meterCurrentL3": {
+        "name": "Current L3",
+        "device_class": SensorDeviceClass.CURRENT,
+        "unit": "A",
+        "icon": "mdi:current-ac",
+        "precision": 2,
+        "enabled_default": False,
+    },
+    "meterCurrentTotal": {
+        "name": "Current Total",
+        "device_class": SensorDeviceClass.CURRENT,
+        "unit": "A",
+        "icon": "mdi:current-ac",
+        "precision": 2,
+    },
+    "meterPowerL1": {
+        "name": "Power L1",
+        "device_class": SensorDeviceClass.POWER,
+        "unit": "W",
+        "icon": "mdi:flash",
+        "precision": 1,
+    },
+    "meterPowerL2": {
+        "name": "Power L2",
+        "device_class": SensorDeviceClass.POWER,
+        "unit": "W",
+        "icon": "mdi:flash",
+        "precision": 1,
+        "enabled_default": False,
+    },
+    "meterPowerL3": {
+        "name": "Power L3",
+        "device_class": SensorDeviceClass.POWER,
+        "unit": "W",
+        "icon": "mdi:flash",
+        "precision": 1,
+        "enabled_default": False,
+    },
+    "meterPowerTotal": {
+        "name": "Power Total",
+        "device_class": SensorDeviceClass.POWER,
+        "unit": "W",
+        "icon": "mdi:flash",
+        "precision": 1,
+    },
+    # Energy counters: cumulative, so TOTAL_INCREASING — but the unit scale (Wh vs kWh)
+    # isn't confirmed yet, so disabled-by-default to keep them out of the Energy
+    # Dashboard / long-term statistics until a load capture pins the scale.
+    "meterImportEnergy": {
+        "name": "Imported Energy",
+        "device_class": SensorDeviceClass.ENERGY,
+        "unit": "Wh",
+        "icon": "mdi:transmission-tower-export",
+        "state_class": SensorStateClass.TOTAL_INCREASING,
+        "precision": 0,
+        "enabled_default": False,
+    },
+    "meterExportEnergy": {
+        "name": "Exported Energy",
+        "device_class": SensorDeviceClass.ENERGY,
+        "unit": "Wh",
+        "icon": "mdi:transmission-tower-import",
+        "state_class": SensorStateClass.TOTAL_INCREASING,
+        "precision": 0,
+        "enabled_default": False,
     },
 }
 
-# Raw float32 measurement channels the meter reports, exposed as DIAGNOSTIC sensors so
-# the CT/grid readings are visible before each is named. `ac` is omitted (it's
-# gridVoltage, already named above). Once a load test identifies power/current/energy,
-# they graduate into SOLIX_METRICS and drop off this list.
-SOLIX_METER_RAW_CHANNELS = [
-    f"channel_{tag}"
-    for tag in (
-        "a8",
-        "a9",
-        "aa",
-        "ab",
-        "ad",
-        "ae",
-        "af",
-        "b0",
-        "b1",
-        "b2",
-        "b3",
-        "b4",
-        "b5",
-        "b6",
-        "b7",
-    )
-]
+# Tags the SDK does not name yet (b5/b6/b7 — the app's own decoder names no field for
+# them; b7 ≈ 0.1 at idle, a firmware-level power-factor candidate). Exposed as raw
+# DIAGNOSTIC sensors (disabled by default) so they're visible for correlation; they
+# graduate into SOLIX_METRICS once identified.
+SOLIX_METER_RAW_CHANNELS = [f"channel_{tag}" for tag in ("b5", "b6", "b7")]
 
 
 def _is_sensor(spec: dict) -> bool:
@@ -374,10 +456,14 @@ class EufySolixSensor(SensorEntity):
         self._attr_native_unit_of_measurement = meta.get("unit")
         if meta.get("device_class"):
             self._attr_device_class = meta["device_class"]
+        if meta.get("state_class"):
+            self._attr_state_class = meta["state_class"]
         if meta.get("icon"):
             self._attr_icon = meta["icon"]
         if meta.get("precision") is not None:
             self._attr_suggested_display_precision = meta["precision"]
+        if meta.get("enabled_default") is False:
+            self._attr_entity_registry_enabled_default = False
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"solix:{sn}")},
             name=dev.get("name") or sn,
