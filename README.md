@@ -1,5 +1,11 @@
 # ha-eufy-sdk
 
+[![HACS](https://img.shields.io/badge/HACS-Custom-41BDF5?logo=home-assistant&logoColor=white)](https://hacs.xyz)
+[![Validate](https://github.com/mega-yfue/ha-eufy-sdk/actions/workflows/validate.yml/badge.svg)](https://github.com/mega-yfue/ha-eufy-sdk/actions/workflows/validate.yml)
+[![Lint](https://github.com/mega-yfue/ha-eufy-sdk/actions/workflows/lint.yml/badge.svg)](https://github.com/mega-yfue/ha-eufy-sdk/actions/workflows/lint.yml)
+[![release](https://img.shields.io/github/v/release/mega-yfue/ha-eufy-sdk?sort=semver)](https://github.com/mega-yfue/ha-eufy-sdk/releases)
+[![license](https://img.shields.io/github/license/mega-yfue/ha-eufy-sdk)](./LICENSE)
+
 The Home Assistant integration for eufy — installed via **HACS**. This is the front door: it talks to
 the [`ha-eufy-sdk-bridge`](https://github.com/mega-yfue/ha-eufy-sdk-bridge) over WebSocket and turns
 every device the bridge reports into HA entities (cameras, sensors, switches, locks, …), with live
