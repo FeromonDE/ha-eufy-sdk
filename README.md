@@ -40,11 +40,18 @@ UI. Once it connects, your devices show up as entities automatically.
 
 Entities are built from what each device reports, so you only get what your hardware supports:
 
-- **Cameras** — live WebRTC/HLS video (via go2rtc), snapshots, and a "Last event" image.
+- **Cameras & doorbells** — live WebRTC/HLS video (via go2rtc), snapshots, and a "Last event" image.
 - **Events** — motion / person / pet / package / doorbell-ring, as HA events + triggers.
+- **Lights** — eufy smart lights (on/off, brightness, and RGB colour where supported).
 - **Sensors** — battery %, signal, and per-device state.
-- **Switches & selects** — e.g. privacy/enabled, night vision, video/recording quality, light control.
+- **Switches, selects & numbers** — e.g. privacy/enabled, night vision, video/recording quality.
 - **Locks** — where the account exposes a supported lock.
+- **Robot vacuums & lawn mowers** — recognised and surfaced as sensors, switches, and buttons.
+  There's no dedicated HA vacuum/mower card yet (start/dock live as controls, not a robot entity).
+
+**Anker Solix** (power stations / smart meter) is a **separate account** and is **not** in the public
+bridge — it ships only in the bridge's `dev`/beta image. With that build, Solix devices appear as
+sensors. The eufyMake 3D printer isn't supported yet.
 
 ## Where it fits
 
