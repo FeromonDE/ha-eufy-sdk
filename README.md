@@ -19,8 +19,12 @@ video via the bridge's bundled go2rtc.
 
 ## Install
 
-In HACS → **Custom repositories**, add this repo as an *Integration*, install, then add **eufy-sdk**
-from **Settings → Devices & Services**.
+One click — open the repo in HACS on your instance:
+
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=mega-yfue&repository=ha-eufy-sdk&category=integration)
+
+Or manually: in HACS → **Custom repositories**, add this repo as an *Integration*, install, then add
+**eufy-sdk** from **Settings → Devices & Services**.
 
 ## Where it fits
 
