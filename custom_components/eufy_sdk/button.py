@@ -22,13 +22,22 @@ async def async_setup_entry(
     entry: EufySdkConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Create a Reboot button for each device the bridge marked `canReboot`."""
+    """Create a Reboot button (HomeBases) and a Refresh-Last-Event button (cameras)."""
     coordinator = entry.runtime_data.coordinator
-    async_add_entities(
+    entities: list[ButtonEntity] = [
         EufySdkRebootButton(coordinator, sn)
         for sn, dev in coordinator.data.items()
         if dev.get("canReboot")
+    ]
+    # A "Refresh Last Event" button per camera/doorbell (same set as the event Image
+    # entity, gated on `stream`): forces the bridge to pull the newest event cover now —
+    # a manual override for when the auto-refresh raced the HomeBase writing the crop.
+    entities.extend(
+        EufyRefreshEventButton(coordinator, sn)
+        for sn, dev in coordinator.data.items()
+        if dev.get("stream")
     )
+    async_add_entities(entities)
 
 
 class EufySdkRebootButton(EufySdkDeviceEntity, ButtonEntity):
@@ -47,3 +56,21 @@ class EufySdkRebootButton(EufySdkDeviceEntity, ButtonEntity):
         """Reboot the HomeBase (it drops offline for a minute or two)."""
         client = self.coordinator.config_entry.runtime_data.client
         await client.reboot(self._sn)
+
+
+class EufyRefreshEventButton(EufySdkDeviceEntity, ButtonEntity):
+    """Force a 'Last event' image refresh — pull the newest event cover now."""
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:image-refresh"
+    _attr_name = "Refresh Last Event"
+
+    def __init__(self, coordinator: EufySdkDataUpdateCoordinator, sn: str) -> None:
+        """Bind to a camera/doorbell serial."""
+        super().__init__(coordinator, sn)
+        self._attr_unique_id = f"{sn}_refresh_last_event"
+
+    async def async_press(self) -> None:
+        """Ask the bridge to re-pull the newest event cover (nudges the Image)."""
+        client = self.coordinator.config_entry.runtime_data.client
+        await client.refresh_event_image(self._sn)
