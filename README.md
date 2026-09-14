@@ -61,3 +61,9 @@ sensors. The eufyMake 3D printer isn't supported yet.
 | [`ha-eufy-sdk-bridge`](https://github.com/mega-yfue/ha-eufy-sdk-bridge) | WS + HTTP + go2rtc daemon (Docker) |
 | [`ha-eufy-sdk-addon`](https://github.com/mega-yfue/ha-eufy-sdk-addon) | Home Assistant add-on wrapper |
 | **`ha-eufy-sdk`** | **this** — the HACS integration (front door) |
+
+## Contributing
+
+Contributions are welcome — please branch from **`dev`** and open your PR against **`dev`** (not
+`main`). See [CONTRIBUTING.md](./CONTRIBUTING.md) for the branch model, CI checks, and how releases
+are cut.

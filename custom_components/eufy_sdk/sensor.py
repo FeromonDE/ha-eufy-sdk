@@ -33,13 +33,17 @@ if TYPE_CHECKING:
 EVENT_TYPE = f"{DOMAIN}_event"
 GO2RTC_RTSP_PORT = 8554  # go2rtc RTSP listener in the bridge image
 
-# Anker Solix Smart Meter (AE1X0) telemetry metrics, keyed by the SDK's field names.
-# The meter is 3-phase-capable and reports each quantity per line (L1/L2/L3) plus a
-# total; `meterVoltageL1` is confirmed live, the rest are the app's own field names
-# bound by a structural-inference map in the SDK. On a single-phase / single-CT install
-# only L1 + totals carry data, so L2/L3 (and the not-yet-scale-confirmed energy
-# counters) ship disabled-by-default to keep the UI clean; a 3-phase user can enable
-# them. The sensor machinery below is generic over this map.
+# Anker Solix Smart Meter (AE1X0) telemetry metrics.
+#
+# IMPORTANT: the SDK only NAMES the one confirmed binding, `meterVoltageL1` (ff09 tag
+# 0xAC). Every other quantity is emitted ONLY as a raw `channel_<hex>` key — the SDK
+# deliberately won't assert an unconfirmed tag→name binding as a typed field. So we read
+# each metric from its ff09 channel (see `_METER_CHANNEL`), not from a name the SDK does
+# not emit; else every sensor but Voltage L1 reads an absent key and shows "Unknown".
+# The tag→channel bindings are the app's own field list (structural inference on a
+# single-phase / single-CT install, where only L1 + totals carry data), so L2/L3 and the
+# not-yet-scale-confirmed energy counters ship disabled-by-default; a 3-phase user can
+# enable them. The sensor machinery below is generic over this map.
 SOLIX_METRICS: dict[str, dict[str, Any]] = {
     "meterVoltageL1": {
         "name": "Voltage L1",
@@ -145,6 +149,26 @@ SOLIX_METRICS: dict[str, dict[str, Any]] = {
         "precision": 0,
         "enabled_default": False,
     },
+}
+
+# The SDK telemetry key each metric reads: its ff09 tag as the `channel_<hex>` key the
+# decoder emits. Voltage L1 is emitted BOTH named (`meterVoltageL1`) and raw
+# (`channel_ac`); reading the channel is uniform and future-proof (the decoder always
+# emits `channel_<hex>`, even after a tag graduates to a confirmed name).
+_METER_CHANNEL: dict[str, str] = {
+    "meterVoltageL1": "channel_ac",
+    "meterVoltageL2": "channel_ad",
+    "meterVoltageL3": "channel_ae",
+    "meterCurrentL1": "channel_af",
+    "meterCurrentL2": "channel_b0",
+    "meterCurrentL3": "channel_b1",
+    "meterCurrentTotal": "channel_b2",
+    "meterPowerL1": "channel_a8",
+    "meterPowerL2": "channel_a9",
+    "meterPowerL3": "channel_aa",
+    "meterPowerTotal": "channel_ab",
+    "meterImportEnergy": "channel_b3",
+    "meterExportEnergy": "channel_b4",
 }
 
 # Tags the SDK does not name yet (b5/b6/b7 — the app's own decoder names no field for
@@ -449,8 +473,12 @@ class EufySolixSensor(SensorEntity):
         self._coordinator = coordinator
         self._sn = sn
         self._metric = metric
+        # The SDK emits this quantity under its ff09 channel key, not the metric name
+        # (only meterVoltageL1 is emitted named). Fall back to the metric name so a tag
+        # that later graduates to a confirmed SDK name still resolves.
+        self._source = _METER_CHANNEL.get(metric, metric)
         dev = coordinator.solix_devices.get(sn, {})
-        self._value = (dev.get("values") or {}).get(metric)
+        self._value = (dev.get("values") or {}).get(self._source)
         self._attr_unique_id = f"solix_{sn}_{metric}"
         self._attr_name = meta["name"]
         self._attr_native_unit_of_measurement = meta.get("unit")
@@ -495,8 +523,8 @@ class EufySolixSensor(SensorEntity):
         if data.get("event") != "solixReading" or data.get("deviceSn") != self._sn:
             return
         values = data.get("values") or {}
-        if self._metric in values:
-            self._value = values[self._metric]
+        if self._source in values:
+            self._value = values[self._source]
             self.async_write_ha_state()
 
 

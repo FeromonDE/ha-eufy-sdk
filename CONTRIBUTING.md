@@ -1,61 +1,66 @@
-# Contribution guidelines
+# Contributing to ha-eufy-sdk
 
-Contributing to this project should be as easy and transparent as possible, whether it's:
+Thanks for helping out! This guide covers **how we branch and merge** so your PR lands smoothly.
 
-- Reporting a bug
-- Discussing the current state of the code
-- Submitting a fix
-- Proposing new features
+## Branch model — target `dev`, not `main`
 
-## Github is used for everything
+We use two long-lived branches:
 
-Github is used to host code, to track issues and feature requests, as well as accept pull requests.
+- **`dev`** — the integration branch. **All contributions go here.**
+- **`main`** — release-only. It's what HACS installs from when we tag a release.
 
-Pull requests are the best way to propose changes to the codebase.
+```
+your branch  ──►  PR into `dev`  ──►  maintainer review + green CI  ──►  merged to dev
+                                                                            │
+                              (when a release is ready) maintainers open    ▼
+                              a  dev ─► main  PR, merge it, then tag ──►  HACS release
+```
 
-1. Fork the repo and create your branch from `main`.
-2. If you've changed something, update the documentation.
-3. Make sure your code lints (using `scripts/lint`).
-4. Test you contribution.
-5. Issue that pull request!
+So the flow for a contribution is:
 
-## Any contributions you make will be under the MIT Software License
+1. Fork (or, if you're a maintainer, branch the repo).
+2. **Create your branch from `dev`.**
+3. Make your change, keep it focused, update docs if behaviour changes.
+4. **Open your pull request against `dev`.** PRs opened against `main` will be asked to retarget.
+5. A maintainer reviews and merges.
 
-In short, when you submit code changes, your submissions are understood to be under the same [MIT License](http://choosealicense.com/licenses/mit/) that covers the project. Feel free to contact the maintainers if that's a concern.
+> **Please don't open PRs into `main`.** `main` moves only when the maintainers cut a release by
+> merging `dev → main` and tagging it. Both `main` and `dev` are protected — everything lands via PR.
 
-## Report bugs using Github's [issues](../../issues)
+## Who can merge
 
-GitHub issues are used to track public bugs.
-Report a bug by [opening a new issue](../../issues/new/choose); it's that easy!
+- **Maintainers** (repo owners) can merge PRs and cut releases.
+- **Everyone else**: your PR needs an approving review from a maintainer before it can merge. CI must
+  be green.
 
-## Write bug reports with detail, background, and sample code
+## Before you push — run the same checks CI does
 
-**Great Bug Reports** tend to have:
+Two workflows gate every PR into `main`/`dev` and must pass:
 
-- A quick summary and/or background
-- Steps to reproduce
-  - Be specific!
-  - Give sample code if you can.
-- What you expected would happen
-- What actually happens
-- Notes (possibly including why you think this might be happening, or stuff you tried that didn't work)
+- **Lint** (`.github/workflows/lint.yml`) — [ruff](https://docs.astral.sh/ruff/):
+  ```bash
+  python3 -m ruff check .
+  python3 -m ruff format . --check
+  ```
+  Fix everything automatically with the helper script:
+  ```bash
+  scripts/lint      # runs `ruff format .` then `ruff check . --fix`
+  ```
+- **Validate** (`.github/workflows/validate.yml`) — Home Assistant **hassfest** + **HACS** action.
+  These run in CI; you don't need them locally.
 
-People *love* thorough bug reports. I'm not even kidding.
+## Testing your change in Home Assistant
 
-## Use a Consistent Coding Style
+This integration is a **client of the [bridge](https://github.com/mega-yfue/ha-eufy-sdk-bridge)** — it
+needs a running bridge to do anything. Run one (Docker/add-on), install this integration into a test
+HA instance via HACS **Custom repositories**, and point the config flow at your bridge.
 
-Use [black](https://github.com/ambv/black) to make sure the code follows the style.
+## Reporting bugs
 
-## Test your code modification
-
-This custom component is based on [eufy_sdk template](https://github.com/mega-yfue/ha-eufy-sdk).
-
-It comes with development environment in a container, easy to launch
-if you use Visual Studio Code. With this container you will have a stand alone
-Home Assistant instance running and already configured with the included
-[`configuration.yaml`](./config/configuration.yaml)
-file.
+Open an [issue](../../issues/new/choose) with a clear summary, steps to reproduce, what you expected
+vs. what happened, your HA version, and relevant logs (enable debug logging for `custom_components.eufy_sdk`).
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under its MIT License.
+By contributing, you agree that your contributions are licensed under the project's
+[MIT License](./LICENSE).
