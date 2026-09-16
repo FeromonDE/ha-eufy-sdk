@@ -223,6 +223,13 @@ SOLIX_BATTERY_METRICS: dict[str, dict[str, Any]] = {
         "icon": "mdi:home-lightning-bolt",
         "precision": 0,
     },
+    "socketPower": {
+        "name": "Socket Power",
+        "device_class": SensorDeviceClass.POWER,
+        "unit": "W",
+        "icon": "mdi:power-socket-uk",
+        "precision": 0,
+    },
 }
 
 def _is_sensor(spec: dict) -> bool:
