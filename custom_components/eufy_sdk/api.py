@@ -207,6 +207,10 @@ class EufySdkApiClient:
         # Each: {sn, productCode, name, category, capabilities, values, firmware}.
         return (await self.rpc("solix.devices")).get("devices", [])
 
+    async def set_solix_light(self, sn: str, *, on: bool) -> None:
+        """Toggle a Solarbank's ambient light (encrypted set_device_attrs write)."""
+        await self.rpc("solix.setLight", deviceSn=sn, on=on)
+
     async def get_properties(self, sn: str) -> list[dict[str, Any]]:
         """Return a device's property manifest (name/type/unit/writable/enumValues)."""
         return (await self.rpc("device.properties", sn=sn))["properties"]
