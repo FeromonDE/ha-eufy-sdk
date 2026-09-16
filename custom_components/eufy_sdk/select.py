@@ -48,13 +48,12 @@ async def async_setup_entry(
         for spec in entry.runtime_data.properties.get(sn, [])
         if classify(spec) == "select"
     ]
-    # Anker Solix (separate account): a Solarbank's display screen-off timeout.
+    # Anker Solix: Solarbank display screen-off timeout + minimum SOC.
     solix = getattr(coordinator, "solix_devices", {}) or {}
-    entities.extend(
-        EufySolixScreenOffSelect(coordinator, sn)
-        for sn, dev in solix.items()
-        if "battery" in dev.get("capabilities", [])
-    )
+    for sn, dev in solix.items():
+        if "battery" in dev.get("capabilities", []):
+            entities.append(EufySolixScreenOffSelect(coordinator, sn))
+            entities.append(EufySolixMinSocSelect(coordinator, sn))
     async_add_entities(entities)
 
 
@@ -175,4 +174,79 @@ class EufySolixScreenOffSelect(SelectEntity):
             seconds = SCREEN_OFF_OPTIONS[option]
         await client.set_solix_screen_off_time(self._sn, seconds)
         self._seconds = seconds
+        self.async_write_ha_state()
+
+
+class EufySolixMinSocSelect(SelectEntity):
+    """
+    A Solarbank's minimum battery SOC (discharge cutoff), as a select.
+
+    The options are NOT hard-coded: they come from the device's own preset list
+    (`get_power_cutoff` -> each `output_cutoff_data` percent with its `id`). The label
+    is the percent (e.g. "10%"); selecting one writes its `id` back. Solix is a separate
+    account/backend, so this is a standalone (non-coordinator) entity that polls.
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "Minimum Battery SOC"
+    _attr_icon = "mdi:battery-arrow-down"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator: EufySdkDataUpdateCoordinator, sn: str) -> None:
+        """Bind to a Solix Solarbank; build its Anker Solix HA device_info."""
+        self._coordinator = coordinator
+        self._sn = sn
+        self._id_by_label: dict[str, int] = {}
+        self._current: str | None = None
+        self._attr_options = []
+        dev = coordinator.solix_devices.get(sn, {})
+        self._attr_unique_id = f"solix_{sn}_min_soc"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"solix:{sn}")},
+            name=dev.get("name") or sn,
+            manufacturer="Anker Solix",
+            model=dev.get("productCode"),
+            sw_version=dev.get("firmware"),
+            serial_number=sn,
+        )
+
+    @property
+    def available(self) -> bool:
+        """Available while the bridge still lists this Solix device."""
+        return self._sn in getattr(self._coordinator, "solix_devices", {})
+
+    @property
+    def current_option(self) -> str | None:
+        """The label of the currently selected cutoff preset."""
+        return self._current
+
+    async def async_update(self) -> None:
+        """Poll the device's cutoff presets and which one is selected."""
+        client = self._coordinator.config_entry.runtime_data.client
+        options = await client.get_solix_power_cutoff(self._sn)
+        id_by_label: dict[str, int] = {}
+        current: str | None = None
+        for opt in options:
+            pct = opt.get("output_cutoff_data")
+            oid = opt.get("id")
+            if pct is None or oid is None:
+                continue
+            label = f"{int(pct)}%"
+            id_by_label[label] = int(oid)
+            if opt.get("is_selected"):
+                current = label
+        if id_by_label:
+            self._id_by_label = id_by_label
+            self._attr_options = list(id_by_label)
+            self._current = current
+
+    async def async_select_option(self, option: str) -> None:
+        """Write the chosen cutoff preset back by its device id."""
+        cutoff_id = self._id_by_label.get(option)
+        if cutoff_id is None:
+            msg = f"unknown minimum-SOC option: {option}"
+            raise HomeAssistantError(msg)
+        client = self._coordinator.config_entry.runtime_data.client
+        await client.set_solix_power_cutoff(self._sn, cutoff_id)
+        self._current = option
         self.async_write_ha_state()

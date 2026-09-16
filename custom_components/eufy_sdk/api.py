@@ -222,6 +222,18 @@ class EufySdkApiClient:
         """Set a Solarbank display screen-off timeout, in seconds."""
         await self.rpc("solix.setScreenOffTime", deviceSn=sn, seconds=seconds)
 
+    async def get_solix_power_cutoff(
+        self, sn: str, site_id: str = ""
+    ) -> list[dict[str, Any]]:
+        """Read the battery discharge-cutoff (minimum-SOC) preset options."""
+        # Each: {id, output_cutoff_data (SOC %), is_selected}.
+        reply = await self.rpc("solix.getPowerCutoff", deviceSn=sn, siteId=site_id)
+        return reply.get("options") or []
+
+    async def set_solix_power_cutoff(self, sn: str, cutoff_data_id: int) -> None:
+        """Select a discharge-cutoff preset by its device id."""
+        await self.rpc("solix.setPowerCutoff", deviceSn=sn, cutoffDataId=cutoff_data_id)
+
     async def get_properties(self, sn: str) -> list[dict[str, Any]]:
         """Return a device's property manifest (name/type/unit/writable/enumValues)."""
         return (await self.rpc("device.properties", sn=sn))["properties"]
