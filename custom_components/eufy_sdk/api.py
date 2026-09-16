@@ -211,6 +211,17 @@ class EufySdkApiClient:
         """Toggle a Solarbank's ambient light (encrypted set_device_attrs write)."""
         await self.rpc("solix.setLight", deviceSn=sn, on=on)
 
+    async def get_solix_device_attrs(
+        self, sn: str, keys: list[str] | None = None
+    ) -> dict[str, Any]:
+        """Read a Solix device's attributes (e.g. screen_off_time) as a flat map."""
+        reply = await self.rpc("solix.getDeviceAttrs", deviceSn=sn, keys=keys or [])
+        return reply.get("attributes") or {}
+
+    async def set_solix_screen_off_time(self, sn: str, seconds: int) -> None:
+        """Set a Solarbank display screen-off timeout, in seconds."""
+        await self.rpc("solix.setScreenOffTime", deviceSn=sn, seconds=seconds)
+
     async def get_properties(self, sn: str) -> list[dict[str, Any]]:
         """Return a device's property manifest (name/type/unit/writable/enumValues)."""
         return (await self.rpc("device.properties", sn=sn))["properties"]
