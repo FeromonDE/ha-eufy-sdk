@@ -608,9 +608,24 @@ class EufySolixSensor(SensorEntity):
         return self._sn in getattr(self._coordinator, "solix_devices", {})
 
     async def async_added_to_hass(self) -> None:
-        """Subscribe to bridge events for live `solixReading` updates."""
+        """Subscribe to live events AND the coordinator's device snapshot."""
         await super().async_added_to_hass()
         self.async_on_remove(self.hass.bus.async_listen(EVENT_TYPE, self._handle_event))
+        # Backstop: some metrics ride only an infrequent frame (batteryTemperature comes
+        # on the periodic "info" frame, not the fast realtime one). The bridge keeps the
+        # last value in its telemetry snapshot, which the coordinator polls — so also
+        # refresh from it; a metric whose live event is missed still shows.
+        self.async_on_remove(self._coordinator.async_add_listener(self._refresh_from_snapshot))
+        self._refresh_from_snapshot()
+
+    @callback
+    def _refresh_from_snapshot(self) -> None:
+        """Adopt the latest value from the coordinator's Solix snapshot, if newer."""
+        dev = self._coordinator.solix_devices.get(self._sn, {})
+        v = (dev.get("values") or {}).get(self._source)
+        if v is not None and v != self._value:
+            self._value = v
+            self.async_write_ha_state()
 
     @callback
     def _handle_event(self, event: Event) -> None:
