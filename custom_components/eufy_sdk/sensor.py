@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -310,6 +310,9 @@ async def async_setup_entry(
         for sn in batteries
         for metric, meta in SOLIX_BATTERY_METRICS.items()
     )
+    # A Charging/Discharging/Idle status per battery (from signed battery power), with
+    # an icon that reflects the state.
+    entities.extend(EufySolixBatteryStatusSensor(coordinator, sn) for sn in batteries)
     async_add_entities(entities)
 
     # Raw channel diagnostics for EVERY Solix device (meter AND Solarbank), added LAZILY
@@ -678,4 +681,78 @@ class EufySolixChannelSensor(SensorEntity):
         values = data.get("values") or {}
         if self._channel in values:
             self._value = values[self._channel]
+            self.async_write_ha_state()
+
+
+class EufySolixBatteryStatusSensor(SensorEntity):
+    """
+    The Solarbank's charge state — Charging / Discharging / Idle.
+
+    Derived from the signed battery power (`batteryPower`: positive charging, negative
+    discharging), with an icon that reflects the state (a charging bolt, a down arrow,
+    or a plain battery) so the device tile shows at a glance what the pack is doing.
+    """
+
+    _attr_has_entity_name = True
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options: ClassVar[list[str]] = ["Charging", "Discharging", "Idle"]
+    _IDLE_W = 5  # |power| below this reads Idle, so standby noise doesn't flap it
+
+    def __init__(self, coordinator: EufySdkDataUpdateCoordinator, sn: str) -> None:
+        """Bind to a Solix battery device; build its Anker Solix HA device_info."""
+        self._coordinator = coordinator
+        self._sn = sn
+        dev = coordinator.solix_devices.get(sn, {})
+        self._power = (dev.get("values") or {}).get("batteryPower")
+        self._attr_unique_id = f"solix_{sn}_battery_status"
+        self._attr_name = "Battery Status"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"solix:{sn}")},
+            name=dev.get("name") or sn,
+            manufacturer="Anker Solix",
+            model=dev.get("productCode"),
+            sw_version=dev.get("firmware"),
+            serial_number=sn,
+        )
+
+    @property
+    def native_value(self) -> str | None:
+        """Charging / Discharging / Idle from the sign of battery power."""
+        p = self._power
+        if p is None:
+            return None
+        if p > self._IDLE_W:
+            return "Charging"
+        if p < -self._IDLE_W:
+            return "Discharging"
+        return "Idle"
+
+    @property
+    def icon(self) -> str:
+        """Icon that reflects the current charge state."""
+        return {
+            "Charging": "mdi:battery-charging",
+            "Discharging": "mdi:battery-arrow-down",
+            "Idle": "mdi:battery",
+        }.get(self.native_value, "mdi:battery")
+
+    @property
+    def available(self) -> bool:
+        """Available while the bridge still lists this Solix device."""
+        return self._sn in getattr(self._coordinator, "solix_devices", {})
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to bridge events for live status updates."""
+        await super().async_added_to_hass()
+        self.async_on_remove(self.hass.bus.async_listen(EVENT_TYPE, self._handle_event))
+
+    @callback
+    def _handle_event(self, event: Event) -> None:
+        """Update from a `solixReading` carrying batteryPower for this device."""
+        data = event.data
+        if data.get("event") != "solixReading" or data.get("deviceSn") != self._sn:
+            return
+        values = data.get("values") or {}
+        if "batteryPower" in values:
+            self._power = values["batteryPower"]
             self.async_write_ha_state()
