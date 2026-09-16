@@ -163,15 +163,6 @@ _METER_CHANNEL: dict[str, str] = {
     "meterExportEnergy": "channel_b4",
 }
 
-# Reserved ff09 slots the app's own decoder names NO field for (b2/b5/b6/b7). The 16
-# float slots a8..b7 carry only 12 named quantities (3x voltage/current/power + power
-# total + import/export energy) — there is no "current total" (the app sums power to a
-# total but not current), so b2 is reserved, not Current Total: on a live single-phase
-# meter it reads a constant ~0.007 A that tracks nothing. Exposed as raw DIAGNOSTIC
-# sensors (disabled by default) so they stay visible for correlation.
-SOLIX_METER_RAW_CHANNELS = [f"channel_{tag}" for tag in ("b2", "b5", "b6", "b7")]
-
-
 def _is_sensor(spec: dict) -> bool:
     """Return True for classify()=="sensor", plus bitfields with no bespoke switches."""
     kind = classify(spec)
@@ -181,7 +172,7 @@ def _is_sensor(spec: dict) -> bool:
 
 
 async def async_setup_entry(
-    hass: HomeAssistant,  # noqa: ARG001
+    hass: HomeAssistant,
     entry: EufySdkConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
@@ -235,7 +226,9 @@ async def async_setup_entry(
         )
     # Anker Solix (separate account): a sensor per known metric on each energy-meter
     # device. Live values arrive as `solixReading` events; the eufy platforms never see
-    # these (kept off `data`).
+    # these (kept off `data`). The named-metric map (SOLIX_METRICS / _METER_CHANNEL) is
+    # the AE1X0 Smart Meter's ff09 tag layout, so it applies ONLY to an energyMeter
+    # device. A Solarbank / battery reports different tags: it gets raw channels below.
     solix = getattr(coordinator, "solix_devices", {}) or {}
     energy_meters = [
         sn for sn, dev in solix.items() if "energyMeter" in dev.get("capabilities", [])
@@ -245,14 +238,41 @@ async def async_setup_entry(
         for sn in energy_meters
         for metric, meta in SOLIX_METRICS.items()
     )
-    # Raw CT/measurement channels as diagnostics — visible for the load-correlation
-    # step, until each is named. Disabled by default so they don't clutter.
-    entities.extend(
-        EufySolixChannelSensor(coordinator, sn, channel)
-        for sn in energy_meters
-        for channel in SOLIX_METER_RAW_CHANNELS
-    )
     async_add_entities(entities)
+
+    # Raw channel diagnostics for EVERY Solix device (meter AND Solarbank), added
+    # LAZILY as each `channel_<hex>` first appears in a solixReading. This is what
+    # surfaces a Solarbank's telemetry (SoC, power, BMS temps): it has no named-metric
+    # map yet, and this needs no per-model list. Present channels are added now, the
+    # rest as they arrive. Disabled by default to avoid clutter.
+    seen_channels: set[tuple[str, str]] = set()
+
+    @callback
+    def _add_new_channels(sn: str, values: dict) -> None:
+        fresh = [
+            ch
+            for ch in values
+            if ch.startswith("channel_") and (sn, ch) not in seen_channels
+        ]
+        for ch in fresh:
+            seen_channels.add((sn, ch))
+        if fresh:
+            async_add_entities(
+                EufySolixChannelSensor(coordinator, sn, ch) for ch in fresh
+            )
+
+    for sn, dev in solix.items():
+        _add_new_channels(sn, dev.get("values") or {})
+
+    @callback
+    def _on_solix_reading(event: Event) -> None:
+        if event.data.get("event") != "solixReading":
+            return
+        sn = event.data.get("deviceSn")
+        if sn:
+            _add_new_channels(sn, event.data.get("values") or {})
+
+    entry.async_on_unload(hass.bus.async_listen(EVENT_TYPE, _on_solix_reading))
 
 
 class EufySdkInfoSensor(EufySdkDeviceEntity, SensorEntity):
