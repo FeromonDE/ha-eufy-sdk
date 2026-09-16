@@ -10,6 +10,7 @@ from homeassistant.const import EntityCategory
 from .bespoke import BITFIELD_SWITCHES
 from .entity import EufySdkPropertyEntity, classify, has_capability, is_setting
 from .light import LIGHT_OWNED_PROPS
+from .lock import LOCK_OWNED_PROPS
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -29,10 +30,14 @@ async def async_setup_entry(
     entities: list[SwitchEntity] = []
     for sn in coordinator.data:
         is_smart_light = has_capability(coordinator.data[sn], "smart_light")
+        is_lock = has_capability(coordinator.data[sn], "lock")
         for spec in entry.runtime_data.properties.get(sn, []):
             # The light platform owns lightPower/lightBrightness for smart_light — don't
             # also surface them as a bare switch/number (would double the control).
             if is_smart_light and spec["name"] in LIGHT_OWNED_PROPS:
+                continue
+            # The lock platform owns the lock property — don't also surface it as a bare switch.
+            if is_lock and spec["name"] in LOCK_OWNED_PROPS:
                 continue
             kind = classify(spec)
             if kind == "switch":
