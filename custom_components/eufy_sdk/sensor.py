@@ -163,6 +163,68 @@ _METER_CHANNEL: dict[str, str] = {
     "meterExportEnergy": "channel_b4",
 }
 
+# Anker Solix Solarbank (AE103 / gen-4) battery metrics. Unlike the meter, the SDK now
+# emits these under NAMED keys (SOC/temp/power flows were live-correlated vs the app UI
+# and bound in the decoder), so each metric reads its own key directly — no channel map.
+# Signed fields (batteryPower/acPlugPower) use POWER, which HA renders with sign. Only
+# confirmed fields are here; PV strings, AC current and export stay raw until confirmed.
+SOLIX_BATTERY_METRICS: dict[str, dict[str, Any]] = {
+    "batterySoc": {
+        "name": "Battery",
+        "device_class": SensorDeviceClass.BATTERY,
+        "unit": "%",
+        "precision": 0,
+    },
+    "batteryTemperature": {
+        "name": "Battery Temperature",
+        "device_class": SensorDeviceClass.TEMPERATURE,
+        "unit": "°C",
+        "precision": 0,
+    },
+    "batteryPower": {
+        "name": "Battery Power",
+        "device_class": SensorDeviceClass.POWER,
+        "unit": "W",
+        "icon": "mdi:home-battery",
+        "precision": 0,
+    },
+    "chargePower": {
+        "name": "Charge Power",
+        "device_class": SensorDeviceClass.POWER,
+        "unit": "W",
+        "icon": "mdi:battery-charging",
+        "precision": 0,
+    },
+    "dischargePower": {
+        "name": "Discharge Power",
+        "device_class": SensorDeviceClass.POWER,
+        "unit": "W",
+        "icon": "mdi:battery-arrow-down",
+        "precision": 0,
+    },
+    "acPlugPower": {
+        "name": "AC Plug Power",
+        "device_class": SensorDeviceClass.POWER,
+        "unit": "W",
+        "icon": "mdi:power-plug",
+        "precision": 0,
+    },
+    "gridInputPower": {
+        "name": "Grid Input",
+        "device_class": SensorDeviceClass.POWER,
+        "unit": "W",
+        "icon": "mdi:transmission-tower",
+        "precision": 0,
+    },
+    "homeLoadPower": {
+        "name": "Home Load",
+        "device_class": SensorDeviceClass.POWER,
+        "unit": "W",
+        "icon": "mdi:home-lightning-bolt",
+        "precision": 0,
+    },
+}
+
 def _is_sensor(spec: dict) -> bool:
     """Return True for classify()=="sensor", plus bitfields with no bespoke switches."""
     kind = classify(spec)
@@ -238,13 +300,23 @@ async def async_setup_entry(
         for sn in energy_meters
         for metric, meta in SOLIX_METRICS.items()
     )
+    # Solarbank / battery devices: named battery metrics (SOC, temp, power). The SDK
+    # emits these under their own keys, so EufySolixSensor reads them directly.
+    batteries = [
+        sn for sn, dev in solix.items() if "battery" in dev.get("capabilities", [])
+    ]
+    entities.extend(
+        EufySolixSensor(coordinator, sn, metric, meta)
+        for sn in batteries
+        for metric, meta in SOLIX_BATTERY_METRICS.items()
+    )
     async_add_entities(entities)
 
-    # Raw channel diagnostics for EVERY Solix device (meter AND Solarbank), added
-    # LAZILY as each `channel_<hex>` first appears in a solixReading. This is what
-    # surfaces a Solarbank's telemetry (SoC, power, BMS temps): it has no named-metric
-    # map yet, and this needs no per-model list. Present channels are added now, the
-    # rest as they arrive. Disabled by default to avoid clutter.
+    # Raw channel diagnostics for EVERY Solix device (meter AND Solarbank), added LAZILY
+    # as each `channel_<hex>` first appears in a solixReading. The named metrics above
+    # cover the confirmed fields; these raw channels expose everything else (PV strings,
+    # currents, export energy) until each is confirmed. Present channels are added now,
+    # the rest as they arrive. Disabled by default to avoid clutter.
     seen_channels: set[tuple[str, str]] = set()
 
     @callback
