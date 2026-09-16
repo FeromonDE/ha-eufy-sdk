@@ -91,13 +91,6 @@ SOLIX_METRICS: dict[str, dict[str, Any]] = {
         "precision": 2,
         "enabled_default": False,
     },
-    "meterCurrentTotal": {
-        "name": "Current Total",
-        "device_class": SensorDeviceClass.CURRENT,
-        "unit": "A",
-        "icon": "mdi:current-ac",
-        "precision": 2,
-    },
     "meterPowerL1": {
         "name": "Power L1",
         "device_class": SensorDeviceClass.POWER,
@@ -162,7 +155,6 @@ _METER_CHANNEL: dict[str, str] = {
     "meterCurrentL1": "channel_af",
     "meterCurrentL2": "channel_b0",
     "meterCurrentL3": "channel_b1",
-    "meterCurrentTotal": "channel_b2",
     "meterPowerL1": "channel_a8",
     "meterPowerL2": "channel_a9",
     "meterPowerL3": "channel_aa",
@@ -171,11 +163,13 @@ _METER_CHANNEL: dict[str, str] = {
     "meterExportEnergy": "channel_b4",
 }
 
-# Tags the SDK does not name yet (b5/b6/b7 — the app's own decoder names no field for
-# them; b7 ≈ 0.1 at idle, a firmware-level power-factor candidate). Exposed as raw
-# DIAGNOSTIC sensors (disabled by default) so they're visible for correlation; they
-# graduate into SOLIX_METRICS once identified.
-SOLIX_METER_RAW_CHANNELS = [f"channel_{tag}" for tag in ("b5", "b6", "b7")]
+# Reserved ff09 slots the app's own decoder names NO field for (b2/b5/b6/b7). The 16
+# float slots a8..b7 carry only 12 named quantities (3x voltage/current/power + power
+# total + import/export energy) — there is no "current total" (the app sums power to a
+# total but not current), so b2 is reserved, not Current Total: on a live single-phase
+# meter it reads a constant ~0.007 A that tracks nothing. Exposed as raw DIAGNOSTIC
+# sensors (disabled by default) so they stay visible for correlation.
+SOLIX_METER_RAW_CHANNELS = [f"channel_{tag}" for tag in ("b2", "b5", "b6", "b7")]
 
 
 def _is_sensor(spec: dict) -> bool:
