@@ -234,6 +234,29 @@ class EufySdkApiClient:
         """Select a discharge-cutoff preset by its device id."""
         await self.rpc("solix.setPowerCutoff", deviceSn=sn, cutoffDataId=cutoff_data_id)
 
+    async def get_solix_soc_params(self, sn: str) -> dict[str, Any]:
+        """Read a Solarbank's SOC-limit block (discharge/charge limit, reserve)."""
+        # {chargeUpperLimit, dischargeLowerLimit, backupReserve, backupReserveSwitch,
+        #  socCalibrationEnable} — whole-percent ints, or {} if the site has no block.
+        reply = await self.rpc("solix.getSocParams", deviceSn=sn)
+        return reply.get("params") or {}
+
+    async def set_solix_soc_limits(
+        self,
+        sn: str,
+        *,
+        discharge: int | None = None,
+        charge: int | None = None,
+    ) -> dict[str, Any]:
+        """Write the discharge and/or charge limit (%); read-modify-write keeps rest."""
+        kwargs: dict[str, Any] = {"deviceSn": sn}
+        if discharge is not None:
+            kwargs["dischargeLowerLimit"] = int(discharge)
+        if charge is not None:
+            kwargs["chargeUpperLimit"] = int(charge)
+        reply = await self.rpc("solix.setSocLimits", **kwargs)
+        return reply.get("params") or {}
+
     async def get_properties(self, sn: str) -> list[dict[str, Any]]:
         """Return a device's property manifest (name/type/unit/writable/enumValues)."""
         return (await self.rpc("device.properties", sn=sn))["properties"]
