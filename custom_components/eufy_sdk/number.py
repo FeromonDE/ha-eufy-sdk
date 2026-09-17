@@ -113,10 +113,10 @@ class _SocLimit(NamedTuple):
 # the bridge broadcasts (also echoed right after a write). Bounds keep them from
 # crossing; the device still validates. Min SOC realistically sits low, max SOC high.
 SOC_DISCHARGE = _SocLimit(
-    "dischargeLimit", "Discharge Limit", "mdi:battery-arrow-down", 0, 50, "discharge"
+    "dischargeLimit", "Discharge Limit", "mdi:battery-arrow-down", 0, 20, "discharge"
 )
 SOC_CHARGE = _SocLimit(
-    "chargeLimit", "Charge Limit", "mdi:battery-arrow-up", 50, 100, "charge"
+    "chargeLimit", "Charge Limit", "mdi:battery-arrow-up", 80, 100, "charge"
 )
 
 
