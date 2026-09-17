@@ -9,7 +9,7 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorStateClass,
 )
-from homeassistant.const import EntityCategory, UnitOfTime
+from homeassistant.const import EntityCategory
 from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceInfo
 
@@ -798,18 +798,17 @@ class _EufySolixTimeSensor(SensorEntity):
     """
     Base for the Solarbank time-to-full / time-to-empty countdown sensors.
 
-    Both derive a duration (in minutes) from the pack's state of charge and its
-    charge/discharge power against the nominal capacity, so they share the same
-    plumbing: seed from the `solix.devices` snapshot, then track `batterySoc`,
-    `batteryPower`, `chargePower` and `dischargePower` from `solixReading` events
-    (and the coordinator's telemetry snapshot). Each subclass turns those inputs
-    into its own countdown in `native_value`; outside its own mode it reads None.
+    Both derive a countdown from the pack's state of charge and its charge/discharge
+    power against the nominal capacity, so they share the same plumbing: seed from the
+    `solix.devices` snapshot, then track `batterySoc`, `batteryPower`, `chargePower`
+    and `dischargePower` from `solixReading` events (and the coordinator's telemetry
+    snapshot). Each subclass turns those inputs into an `H:MM:SS` countdown string in
+    `native_value`; outside its own mode it reads None. It's a formatted string (not a
+    numeric DURATION) so the tile reads as a clock rather than a raw minute count.
     """
 
     _attr_has_entity_name = True
-    _attr_device_class = SensorDeviceClass.DURATION
-    _attr_native_unit_of_measurement = UnitOfTime.MINUTES
-    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:timer-sand"
     # Rate floor: below this the countdown blows up toward infinity (and standby noise
     # would make it jitter wildly), so we report Unknown instead.
     _MIN_POWER_W = 10
@@ -881,16 +880,19 @@ class _EufySolixTimeSensor(SensorEntity):
         return changed
 
     @staticmethod
-    def _minutes(hours: float) -> int:
-        """Whole minutes from an hours figure (DURATION-in-minutes renders cleanly)."""
-        return round(hours * 60)
+    def _hms(hours: float) -> str:
+        """Format an hours figure as an H:MM:SS string (e.g. 1:23:45, 10:05:00)."""
+        total = max(0, round(hours * 3600))
+        h, rem = divmod(total, 3600)
+        m, s = divmod(rem, 60)
+        return f"{h}:{m:02d}:{s:02d}"
 
 
 class EufySolixTimeToFullSensor(_EufySolixTimeSensor):
     """
-    Estimated minutes until the Solarbank is fully charged (charging only).
+    Estimated time (H:MM:SS) until the Solarbank is fully charged (charging only).
 
-    remaining_wh = (100 - SOC)/100 * capacity; minutes = remaining_wh / charge_W.
+    remaining_wh = (100 - SOC)/100 * capacity; hours = remaining_wh / charge_W.
     Reads None (Unknown) when not charging, when SOC ≥ 100, or when the charge rate
     is below `_MIN_POWER_W`. The rate prefers the unsigned `chargePower`, falling
     back to positive `batteryPower` when `chargePower` is missing/zero.
@@ -915,8 +917,8 @@ class EufySolixTimeToFullSensor(_EufySolixTimeSensor):
         return None
 
     @property
-    def native_value(self) -> int | None:
-        """Minutes to full while charging; None otherwise."""
+    def native_value(self) -> str | None:
+        """H:MM:SS to full while charging; None otherwise."""
         soc = self._soc
         if soc is None or soc >= 100:  # noqa: PLR2004 - 100% = full, nothing to count
             return None
@@ -924,14 +926,14 @@ class EufySolixTimeToFullSensor(_EufySolixTimeSensor):
         if watts is None or watts < self._MIN_POWER_W:
             return None
         remaining_wh = (100 - soc) / 100 * SOLARBANK_CAPACITY_WH
-        return self._minutes(remaining_wh / watts)
+        return self._hms(remaining_wh / watts)
 
 
 class EufySolixTimeToEmptySensor(_EufySolixTimeSensor):
     """
-    Estimated minutes until the Solarbank is empty (discharging only).
+    Estimated time (H:MM:SS) until the Solarbank is empty (discharging only).
 
-    used_wh = SOC/100 * capacity; minutes = used_wh / discharge_W. Reads None
+    used_wh = SOC/100 * capacity; hours = used_wh / discharge_W. Reads None
     (Unknown) when not discharging, when SOC ≤ 0, or when the discharge rate is
     below `_MIN_POWER_W`. The rate prefers the unsigned `dischargePower`, falling
     back to the magnitude of negative `batteryPower` when it's missing/zero.
@@ -956,8 +958,8 @@ class EufySolixTimeToEmptySensor(_EufySolixTimeSensor):
         return None
 
     @property
-    def native_value(self) -> int | None:
-        """Minutes to empty while discharging; None otherwise."""
+    def native_value(self) -> str | None:
+        """H:MM:SS to empty while discharging; None otherwise."""
         soc = self._soc
         if soc is None or soc <= 0:
             return None
@@ -965,4 +967,4 @@ class EufySolixTimeToEmptySensor(_EufySolixTimeSensor):
         if watts is None or watts < self._MIN_POWER_W:
             return None
         used_wh = soc / 100 * SOLARBANK_CAPACITY_WH
-        return self._minutes(used_wh / watts)
+        return self._hms(used_wh / watts)

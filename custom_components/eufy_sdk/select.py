@@ -14,20 +14,22 @@ from .const import DOMAIN
 from .entity import EufySdkPropertyEntity, classify
 
 if TYPE_CHECKING:
-    from homeassistant.core import HomeAssistant
+    from homeassistant.core import Event, HomeAssistant
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
     from .coordinator import EufySdkDataUpdateCoordinator
     from .data import EufySdkConfigEntry
 
+EVENT_TYPE = f"{DOMAIN}_event"
+
 # Solarbank display screen-off timeout — set by an MQTT command (cmd 17, ff09 msgtype
 # 0x68, tag a5=[01,index]), live-captured + write-verified on an AE103. The value is a
 # 1-based index into the app dropdown. "Never" is a SEPARATE command (an HTTP
-# low-brightness mode, not yet reversed), so it's omitted. Unlike the ambient light
-# (readable from ff09 tag 0xba), the current timeout is NOT exposed anywhere: confirmed
-# by a live sweep of all four very-different indices — get_device_attrs stays {}, the
-# scene carries no timeout field, and NO ff09 tag moved. So HA cannot know what the app
-# set it to; this select is unavoidably OPTIMISTIC (it shows only what HA itself set).
+# low-brightness mode, not yet reversed), so it's omitted. It's not in telemetry/HTTP
+# (get_device_attrs {}, no scene field, no ff09 tag), BUT an app change publishes it
+# that a5 command on the device /req topic, which the bridge co-subscribes to — so the
+# the SDK emits `displayTimeoutIndex` and this select reflects an app change (except
+# "Never", which sends no a5).
 DISPLAY_TIMEOUT_INDEX: dict[str, int] = {
     "10s": 1,
     "20s": 2,
@@ -36,6 +38,7 @@ DISPLAY_TIMEOUT_INDEX: dict[str, int] = {
     "5m": 5,
     "30m": 6,
 }
+DISPLAY_TIMEOUT_LABEL: dict[int, str] = {v: k for k, v in DISPLAY_TIMEOUT_INDEX.items()}
 
 
 async def async_setup_entry(
@@ -99,9 +102,11 @@ class EufySolixScreenOffSelect(SelectEntity):
     A Solarbank's display screen-off timeout (10s/20s/30s/1m/5m/30m).
 
     Solix is a separate account/backend, so this is a standalone entity. The timeout is
-    set by an MQTT command (write-verified live) carrying a 1-based dropdown index.
-    The current value is not exposed by the cloud, so the select is OPTIMISTIC: it shows
-    the value it last set (`None` until picked). "Never" is separate, omitted here.
+    set by an MQTT command carrying a 1-based dropdown index. It isn't in telemetry or
+    an HTTP read, but an app change publishes that command on the device `/req` topic,
+    which the bridge co-subscribes to — the SDK surfaces it as `displayTimeoutIndex`, so
+    this select reflects an app change (seeded from the snapshot + live `solixReading`
+    events), except "Never" (no index). A value we set is shown optimistically.
     """
 
     _attr_has_entity_name = True
@@ -112,11 +117,11 @@ class EufySolixScreenOffSelect(SelectEntity):
     _attr_options: ClassVar[list[str]] = list(DISPLAY_TIMEOUT_INDEX)
 
     def __init__(self, coordinator: EufySdkDataUpdateCoordinator, sn: str) -> None:
-        """Bind to a Solix Solarbank; build its Anker Solix HA device_info."""
+        """Bind to a Solix Solarbank; seed the current index from telemetry."""
         self._coordinator = coordinator
         self._sn = sn
-        self._current: str | None = None
         dev = coordinator.solix_devices.get(sn, {})
+        self._current = self._label_from(dev)
         self._attr_unique_id = f"solix_{sn}_screen_off_time"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"solix:{sn}")},
@@ -127,6 +132,12 @@ class EufySolixScreenOffSelect(SelectEntity):
             serial_number=sn,
         )
 
+    @staticmethod
+    def _label_from(dev: dict[str, Any]) -> str | None:
+        """Map a device's `displayTimeoutIndex` to a dropdown label, if present."""
+        idx = (dev.get("values") or {}).get("displayTimeoutIndex")
+        return None if idx is None else DISPLAY_TIMEOUT_LABEL.get(int(idx))
+
     @property
     def available(self) -> bool:
         """Available while the bridge still lists this Solix device."""
@@ -134,8 +145,38 @@ class EufySolixScreenOffSelect(SelectEntity):
 
     @property
     def current_option(self) -> str | None:
-        """The last value we set (optimistic; the device doesn't report it)."""
+        """The selected timeout (from the app's command or the last value we set)."""
         return self._current
+
+    async def async_added_to_hass(self) -> None:
+        """Reflect an app timeout change: live events + the coordinator snapshot."""
+        await super().async_added_to_hass()
+        self.async_on_remove(self.hass.bus.async_listen(EVENT_TYPE, self._handle_event))
+        self.async_on_remove(
+            self._coordinator.async_add_listener(self._refresh_from_snapshot)
+        )
+        self._refresh_from_snapshot()
+
+    @callback
+    def _refresh_from_snapshot(self) -> None:
+        """Adopt the index from the coordinator's Solix snapshot, if changed."""
+        label = self._label_from(self._coordinator.solix_devices.get(self._sn, {}))
+        if label is not None and label != self._current:
+            self._current = label
+            self.async_write_ha_state()
+
+    @callback
+    def _handle_event(self, event: Event) -> None:
+        """Update from a `solixReading` for this device carrying displayTimeoutIndex."""
+        data = event.data
+        if data.get("event") != "solixReading" or data.get("deviceSn") != self._sn:
+            return
+        idx = (data.get("values") or {}).get("displayTimeoutIndex")
+        if idx is not None:
+            label = DISPLAY_TIMEOUT_LABEL.get(int(idx))
+            if label is not None and label != self._current:
+                self._current = label
+                self.async_write_ha_state()
 
     async def async_select_option(self, option: str) -> None:
         """Send the chosen timeout as its 1-based index via the bridge MQTT command."""
