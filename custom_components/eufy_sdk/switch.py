@@ -36,7 +36,7 @@ async def async_setup_entry(
             # also surface them as a bare switch/number (would double the control).
             if is_smart_light and spec["name"] in LIGHT_OWNED_PROPS:
                 continue
-            # The lock platform owns the lock property — don't also surface it as a bare switch.
+            # The lock platform owns the 'locked' — don't also surface it as a switch.
             if is_lock and spec["name"] in LOCK_OWNED_PROPS:
                 continue
             kind = classify(spec)
