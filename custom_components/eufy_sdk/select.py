@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from homeassistant.components.select import SelectEntity
@@ -9,6 +10,7 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.event import async_track_time_interval
 
 from .const import DOMAIN
 from .entity import EufySdkPropertyEntity, classify
@@ -21,14 +23,18 @@ if TYPE_CHECKING:
     from .data import EufySdkConfigEntry
 
 EVENT_TYPE = f"{DOMAIN}_event"
+# The minimum-SOC selection is only readable by re-polling get_power_cutoff (no
+# push). Refresh it on its own short cadence, not the slow (default 10-min)
+# coordinator cycle, so an app change shows within a couple of minutes.
+MIN_SOC_REFRESH = timedelta(minutes=2)
 
 # Solarbank display screen-off timeout — set by an MQTT command (cmd 17, ff09 msgtype
 # 0x68, tag a5=[01,index]), live-captured + write-verified on an AE103. The value is a
 # 1-based index into the app dropdown. "Never" is a SEPARATE command (an HTTP
 # low-brightness mode, not yet reversed), so it's omitted. It's not in telemetry/HTTP
-# (get_device_attrs {}, no scene field, no ff09 tag), BUT an app change publishes it
-# that a5 command on the device /req topic, which the bridge co-subscribes to — so the
-# the SDK emits `displayTimeoutIndex` and this select reflects an app change (except
+# (get_device_attrs {}, no scene field, no ff09 tag), BUT an app change publishes that
+# a5 command on the device /req topic, which the bridge co-subscribes to — so the SDK
+# emits `displayTimeoutIndex` and this select reflects an app change (except
 # "Never", which sends no a5).
 DISPLAY_TIMEOUT_INDEX: dict[str, int] = {
     "10s": 1,
@@ -239,16 +245,16 @@ class EufySolixMinSocSelect(SelectEntity):
         return self._current
 
     async def async_added_to_hass(self) -> None:
-        """Read once now, then refresh on every coordinator update cycle."""
+        """Read once now, then re-poll on a dedicated short interval."""
         await super().async_added_to_hass()
         self.async_on_remove(
-            self._coordinator.async_add_listener(self._schedule_refresh)
+            async_track_time_interval(self.hass, self._timed_refresh, MIN_SOC_REFRESH)
         )
         await self._refresh()
 
     @callback
-    def _schedule_refresh(self) -> None:
-        """Coordinator ticked — re-read the cutoff selection off the event loop."""
+    def _timed_refresh(self, _now: Any) -> None:
+        """Interval tick — re-read the cutoff selection off the event loop."""
         self.hass.async_create_task(self._refresh())
 
     async def _refresh(self) -> None:
