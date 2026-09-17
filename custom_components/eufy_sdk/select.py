@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.const import EntityCategory
+from homeassistant.core import callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceInfo
 
@@ -22,8 +23,11 @@ if TYPE_CHECKING:
 # Solarbank display screen-off timeout — set by an MQTT command (cmd 17, ff09 msgtype
 # 0x68, tag a5=[01,index]), live-captured + write-verified on an AE103. The value is a
 # 1-based index into the app dropdown. "Never" is a SEPARATE command (an HTTP
-# low-brightness mode, not yet reversed), so it's omitted. The current value isn't
-# exposed by the cloud (HTTP/telemetry), so the select is optimistic.
+# low-brightness mode, not yet reversed), so it's omitted. Unlike the ambient light
+# (readable from ff09 tag 0xba), the current timeout is NOT exposed anywhere: confirmed
+# by a live sweep of all four very-different indices — get_device_attrs stays {}, the
+# scene carries no timeout field, and NO ff09 tag moved. So HA cannot know what the app
+# set it to; this select is unavoidably OPTIMISTIC (it shows only what HA itself set).
 DISPLAY_TIMEOUT_INDEX: dict[str, int] = {
     "10s": 1,
     "20s": 2,
@@ -150,15 +154,20 @@ class EufySolixMinSocSelect(SelectEntity):
     A Solarbank's minimum battery SOC (discharge cutoff), as a select.
 
     The options are NOT hard-coded: they come from the device's own preset list
-    (`get_power_cutoff` -> each `output_cutoff_data` percent with its `id`). The label
-    is the percent (e.g. "10%"); selecting one writes its `id` back. Solix is a separate
-    account/backend, so this is a standalone (non-coordinator) entity that polls.
+    (`get_power_cutoff` — each `output_cutoff_data` percent, its `id`, and which is
+    `is_selected`). The label is the percent (e.g. "10%"); selecting one writes its `id`
+    back. The selection is read back from the device, so a change made outside HA (the
+    app) IS reflected: rather than relying on HA's implicit entity polling (which proved
+    unreliable for these standalone Solix entities), the refresh is driven off the
+    coordinator's own update cycle — the trigger the Solix sensors use — so it re-reads
+    every poll interval. Solix is a separate account/backend (standalone entity).
     """
 
     _attr_has_entity_name = True
     _attr_name = "Minimum Battery SOC"
     _attr_icon = "mdi:battery-arrow-down"
     _attr_entity_category = EntityCategory.CONFIG
+    _attr_should_poll = False  # driven off the coordinator cycle
 
     def __init__(self, coordinator: EufySdkDataUpdateCoordinator, sn: str) -> None:
         """Bind to a Solix Solarbank; build its Anker Solix HA device_info."""
@@ -188,8 +197,21 @@ class EufySolixMinSocSelect(SelectEntity):
         """The label of the currently selected cutoff preset."""
         return self._current
 
-    async def async_update(self) -> None:
-        """Poll the device's cutoff presets and which one is selected."""
+    async def async_added_to_hass(self) -> None:
+        """Read once now, then refresh on every coordinator update cycle."""
+        await super().async_added_to_hass()
+        self.async_on_remove(
+            self._coordinator.async_add_listener(self._schedule_refresh)
+        )
+        await self._refresh()
+
+    @callback
+    def _schedule_refresh(self) -> None:
+        """Coordinator ticked — re-read the cutoff selection off the event loop."""
+        self.hass.async_create_task(self._refresh())
+
+    async def _refresh(self) -> None:
+        """Poll the cutoff presets + selection; write state if it changed."""
         client = self._coordinator.config_entry.runtime_data.client
         options = await client.get_solix_power_cutoff(self._sn)
         id_by_label: dict[str, int] = {}
@@ -203,10 +225,13 @@ class EufySolixMinSocSelect(SelectEntity):
             id_by_label[label] = int(oid)
             if opt.get("is_selected"):
                 current = label
-        if id_by_label:
+        if id_by_label and (
+            id_by_label != self._id_by_label or current != self._current
+        ):
             self._id_by_label = id_by_label
             self._attr_options = list(id_by_label)
             self._current = current
+            self.async_write_ha_state()
 
     async def async_select_option(self, option: str) -> None:
         """Write the chosen cutoff preset back by its device id."""

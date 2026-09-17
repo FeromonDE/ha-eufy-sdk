@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.const import EntityCategory
+from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceInfo
 
 from .bespoke import BITFIELD_SWITCHES
@@ -14,11 +15,13 @@ from .entity import EufySdkPropertyEntity, classify, has_capability, is_setting
 from .light import LIGHT_OWNED_PROPS
 
 if TYPE_CHECKING:
-    from homeassistant.core import HomeAssistant
+    from homeassistant.core import Event, HomeAssistant
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
     from .coordinator import EufySdkDataUpdateCoordinator
     from .data import EufySdkConfigEntry
+
+EVENT_TYPE = f"{DOMAIN}_event"
 
 
 async def async_setup_entry(
@@ -51,8 +54,8 @@ async def async_setup_entry(
                     for label, bit in bf["bits"].items()
                 )
 
-    # Anker Solix (separate account): a Solarbank's ambient light — a standalone,
-    # assumed-state switch (write-only; the AE10x doesn't report the light state).
+    # Anker Solix (separate account): a Solarbank's ambient light — a standalone switch
+    # that reflects the device state (ambientLightOn, decoded from the ff09 telemetry).
     solix = getattr(coordinator, "solix_devices", {}) or {}
     entities.extend(
         EufySolixLightSwitch(coordinator, sn)
@@ -65,27 +68,28 @@ async def async_setup_entry(
 
 class EufySolixLightSwitch(SwitchEntity):
     """
-    A Solarbank's ambient light as a switch — ASSUMED STATE (write-only).
+    A Solarbank's ambient light as a switch — reflects the DEVICE state.
 
-    Toggling issues an encrypted `set_device_attrs` write through the bridge, which
-    controls the light reliably. But the Solarbank 4 (AE10x) does NOT expose the
-    light's on/off anywhere readable — `get_device_attrs` returns nothing for it and
-    the `ff09` `ba` byte is constant across toggles (that bitfield was A17C*-only). So
-    the switch is assumed-state: it shows the value it last commanded, and a change made
-    outside HA (the app / button) can't be reflected. Device is `solix:<sn>`.
+    Toggling issues an encrypted `set_device_attrs` write through the bridge. The state
+    is read back from the `ff09` telemetry: the SDK decodes `ambientLightOn` (1/0) from
+    tag `0xba` bit 0x20 (inverted), live-confirmed on an AE103 across app + HA toggles.
+    So a change made outside HA (the app / physical button) is reflected within a few
+    seconds via `solixReading` events, and this is NOT assumed-state. The value seeds
+    from the bridge's `solix.devices` snapshot and updates on live events. To avoid a UI
+    flicker while the ~seconds-late telemetry catches up, a toggle we issue sets the
+    shown state optimistically; the next reading confirms it. Device is `solix:<sn>`.
     """
 
     _attr_has_entity_name = True
     _attr_name = "Ambient Light"
     _attr_icon = "mdi:led-strip-variant"
-    _attr_assumed_state = True
 
     def __init__(self, coordinator: EufySdkDataUpdateCoordinator, sn: str) -> None:
-        """Bind to a Solix Solarbank; build its Anker Solix HA device_info."""
+        """Bind to a Solix Solarbank; seed from its telemetry snapshot."""
         self._coordinator = coordinator
         self._sn = sn
-        self._on: bool | None = None  # assumed state — the device does not report it
         dev = coordinator.solix_devices.get(sn, {})
+        self._on = self._read_snapshot(dev)
         self._attr_unique_id = f"solix_{sn}_ambient_light"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"solix:{sn}")},
@@ -96,9 +100,15 @@ class EufySolixLightSwitch(SwitchEntity):
             serial_number=sn,
         )
 
+    @staticmethod
+    def _read_snapshot(dev: dict[str, Any]) -> bool | None:
+        """Read ambientLightOn (1/0) from a device's values; None if absent."""
+        v = (dev.get("values") or {}).get("ambientLightOn")
+        return None if v is None else bool(v)
+
     @property
     def is_on(self) -> bool | None:
-        """The last value we commanded (assumed state; None until first used)."""
+        """The light's state from telemetry (None until a reading arrives)."""
         return self._on
 
     @property
@@ -106,8 +116,36 @@ class EufySolixLightSwitch(SwitchEntity):
         """Available while the bridge still lists this Solix device."""
         return self._sn in getattr(self._coordinator, "solix_devices", {})
 
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to live readings AND the coordinator's device snapshot."""
+        await super().async_added_to_hass()
+        self.async_on_remove(self.hass.bus.async_listen(EVENT_TYPE, self._handle_event))
+        self.async_on_remove(
+            self._coordinator.async_add_listener(self._refresh_from_snapshot)
+        )
+        self._refresh_from_snapshot()
+
+    @callback
+    def _refresh_from_snapshot(self) -> None:
+        """Adopt the light state from the coordinator's Solix snapshot, if changed."""
+        v = self._read_snapshot(self._coordinator.solix_devices.get(self._sn, {}))
+        if v is not None and v != self._on:
+            self._on = v
+            self.async_write_ha_state()
+
+    @callback
+    def _handle_event(self, event: Event) -> None:
+        """Update from a `solixReading` for this device that carries ambientLightOn."""
+        data = event.data
+        if data.get("event") != "solixReading" or data.get("deviceSn") != self._sn:
+            return
+        values = data.get("values") or {}
+        if "ambientLightOn" in values:
+            self._on = bool(values["ambientLightOn"])
+            self.async_write_ha_state()
+
     async def async_turn_on(self, **_: Any) -> None:
-        """Turn the ambient light on (assumed state; device doesn't report back)."""
+        """Turn the ambient light on (optimistic; telemetry confirms shortly)."""
         await self._coordinator.config_entry.runtime_data.client.set_solix_light(
             self._sn, on=True
         )
@@ -115,7 +153,7 @@ class EufySolixLightSwitch(SwitchEntity):
         self.async_write_ha_state()
 
     async def async_turn_off(self, **_: Any) -> None:
-        """Turn the ambient light off (assumed state; device doesn't report back)."""
+        """Turn the ambient light off (optimistic; telemetry confirms shortly)."""
         await self._coordinator.config_entry.runtime_data.client.set_solix_light(
             self._sn, on=False
         )
