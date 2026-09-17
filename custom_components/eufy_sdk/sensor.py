@@ -245,6 +245,21 @@ SOLIX_BATTERY_METRICS: dict[str, dict[str, Any]] = {
         "precision": 0,
         "enabled_default": False,
     },
+    # SOC limits — the app's discharge/charge sliders, decoded from param_info tag b5
+    # (live-confirmed: discharge 10%→5% moved b5[0]). READ-ONLY for now (write path
+    # not yet captured).
+    "dischargeLimit": {
+        "name": "Discharge Limit",
+        "unit": "%",
+        "icon": "mdi:battery-arrow-down-outline",
+        "precision": 0,
+    },
+    "chargeLimit": {
+        "name": "Charge Limit",
+        "unit": "%",
+        "icon": "mdi:battery-arrow-up-outline",
+        "precision": 0,
+    },
 }
 
 # The Solarbank's operating (EMS) mode from the `state_info` `mode` value (live-mapped).
