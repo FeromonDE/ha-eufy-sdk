@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.const import PERCENTAGE, EntityCategory
 from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.event import async_track_time_interval
 
 from .const import DOMAIN
 from .entity import EufySdkPropertyEntity, classify, has_capability
@@ -21,6 +23,9 @@ if TYPE_CHECKING:
     from .data import EufySdkConfigEntry
 
 EVENT_TYPE = f"{DOMAIN}_event"
+# SOC limits change rarely and the b5 telemetry only carries them on a settings frame,
+# so back the live events with a slow authoritative HTTP re-read (seed + this interval).
+SOC_REFRESH = timedelta(minutes=5)
 
 # The manifest carries no min/max, so pick a sane range from the value's `kind`.
 _RANGE_BY_KIND = {"percent": (0, 100), "seconds": (0, 86400), "degrees": (0, 360)}
@@ -97,11 +102,13 @@ class _SocLimit(NamedTuple):
     """
     A Solix SOC-limit slider descriptor.
 
-    `key` is the telemetry value key; `write_kw` the api.py write keyword. Discharge =
-    minimum SOC (floor); charge = maximum SOC (ceiling).
+    `key` is the telemetry (b5) value key; `param_key` the field in the HTTP
+    get_solix_soc_params read; `write_kw` the api.py write keyword. Discharge = minimum
+    SOC (floor); charge = maximum SOC (ceiling).
     """
 
     key: str
+    param_key: str
     name: str
     icon: str
     low: int
@@ -113,10 +120,22 @@ class _SocLimit(NamedTuple):
 # the bridge broadcasts (also echoed right after a write). Bounds keep them from
 # crossing; the device still validates. Min SOC realistically sits low, max SOC high.
 SOC_DISCHARGE = _SocLimit(
-    "dischargeLimit", "Discharge Limit", "mdi:battery-arrow-down", 0, 20, "discharge"
+    "dischargeLimit",
+    "dischargeLowerLimit",
+    "Discharge Limit",
+    "mdi:battery-arrow-down",
+    0,
+    20,
+    "discharge",
 )
 SOC_CHARGE = _SocLimit(
-    "chargeLimit", "Charge Limit", "mdi:battery-arrow-up", 80, 100, "charge"
+    "chargeLimit",
+    "chargeUpperLimit",
+    "Charge Limit",
+    "mdi:battery-arrow-up",
+    80,
+    100,
+    "charge",
 )
 
 
@@ -182,13 +201,38 @@ class EufySolixSocLimitNumber(NumberEntity):
         return self._sn in getattr(self._coordinator, "solix_devices", {})
 
     async def async_added_to_hass(self) -> None:
-        """Subscribe to live readings AND the coordinator's device snapshot."""
+        """Seed from the authoritative HTTP read, then track live readings/snapshot."""
         await super().async_added_to_hass()
         self.async_on_remove(self.hass.bus.async_listen(EVENT_TYPE, self._handle_event))
         self.async_on_remove(
             self._coordinator.async_add_listener(self._refresh_from_snapshot)
         )
         self._refresh_from_snapshot()
+        # b5 telemetry only carries the limits on a settings frame (pushed on change,
+        # not periodically), so seed from the cloud read + keep a slow HTTP backstop;
+        # the slider then shows the real value on load and stays right even if the MQTT
+        # push is quiet. Live b5 events (_handle_event) still update it immediately.
+        await self._fetch_limit()
+        self.async_on_remove(
+            async_track_time_interval(self.hass, self._timed_refresh, SOC_REFRESH)
+        )
+
+    @callback
+    def _timed_refresh(self, _now: Any) -> None:
+        """Interval tick — re-read the SOC limits off the event loop."""
+        self.hass.async_create_task(self._fetch_limit())
+
+    async def _fetch_limit(self) -> None:
+        """Read the authoritative SOC limits over HTTP and adopt this slider's value."""
+        try:
+            client = self._coordinator.config_entry.runtime_data.client
+            params = await client.get_solix_soc_params(self._sn)
+        except Exception:  # noqa: BLE001 - a read hiccup must not break the entity
+            return
+        v = params.get(self._limit.param_key)
+        if isinstance(v, (int, float)) and float(v) != self._value:
+            self._value = float(v)
+            self.async_write_ha_state()
 
     @callback
     def _refresh_from_snapshot(self) -> None:

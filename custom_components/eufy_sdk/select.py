@@ -122,7 +122,7 @@ class EufySolixScreenOffSelect(SelectEntity):
     Solix is a separate account/backend, so this is a standalone entity. The timeout is
     set by an MQTT `…/req` command carrying a 1-based dropdown index (Never = 0) — not
     an HTTP write (live-captured: 30s=a5:03, 5m=a5:05). It isn't in any HTTP read or
-    passive telemetry frame, but an app change publishes that command on the device `/req`
+    passive telemetry frame, but an app change publishes that command on the `/req`
     topic, which the bridge co-subscribes to — the SDK surfaces it as
     `displayTimeoutIndex`, so this select reflects an app change live (snapshot +
     `solixReading` events). A value we set is shown optimistically.
