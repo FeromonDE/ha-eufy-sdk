@@ -29,11 +29,12 @@ EVENT_TYPE = f"{DOMAIN}_event"
 # low-brightness mode, not yet reversed), so it's omitted. It's not in telemetry/HTTP
 # (get_device_attrs {}, no scene field, no ff09 tag), BUT an app change publishes that
 # a5 command on the device /req topic, which the bridge co-subscribes to — so the SDK
-# emits `displayTimeoutIndex` and this select reflects an app change (except
-# "Never", which sends no a5).
+# emits `displayTimeoutIndex` and this select reflects an app change.
 # 1-based dropdown index → a5=[01,index] MQTT /req command (30s/5m live-captured as
-# a5=01 03 / 01 05 — an MQTT write, not HTTP). "Never" is intentionally absent: the app
-# sets it via a separate non-a5 path we haven't reversed, so it can't round-trip.
+# a5=01 03 / 01 05 — an MQTT write, not HTTP). "Never" = index 0 (from the app's picker
+# option list). ONE ASYMMETRY: setting Never IN THE APP uses a separate non-a5 path we
+# can't see, so an app→Never change won't reflect in HA (it stays on the last value);
+# HA→Never and every timed change both ways do work.
 DISPLAY_TIMEOUT_INDEX: dict[str, int] = {
     "10s": 1,
     "20s": 2,
@@ -41,6 +42,7 @@ DISPLAY_TIMEOUT_INDEX: dict[str, int] = {
     "1m": 4,
     "5m": 5,
     "30m": 6,
+    "Never": 0,
 }
 DISPLAY_TIMEOUT_LABEL: dict[int, str] = {v: k for k, v in DISPLAY_TIMEOUT_INDEX.items()}
 
@@ -115,22 +117,22 @@ class EufySdkSelect(EufySdkPropertyEntity, SelectEntity):
 
 class EufySolixScreenOffSelect(SelectEntity):
     """
-    A Solarbank's display screen-off timeout (10s/20s/30s/1m/5m/30m).
+    A Solarbank's display screen-off timeout (10s/20s/30s/1m/5m/30m/Never).
 
     Solix is a separate account/backend, so this is a standalone entity. The timeout is
-    set by an MQTT `…/req` command carrying a 1-based dropdown index — NOT an HTTP write
-    (live-captured: 30s=a5:03, 5m=a5:05). It isn't in any HTTP read or passive telemetry
-    frame, but an app change publishes that same command on the device `/req` topic,
-    which the bridge co-subscribes to — the SDK surfaces it as `displayTimeoutIndex`, so
-    this select reflects an app change live (from the snapshot + `solixReading` events).
-    A value we set is shown optimistically.
+    set by an MQTT `…/req` command carrying a 1-based dropdown index (Never = 0) — not
+    an HTTP write (live-captured: 30s=a5:03, 5m=a5:05). It isn't in any HTTP read or
+    passive telemetry frame, but an app change publishes that command on the device `/req`
+    topic, which the bridge co-subscribes to — the SDK surfaces it as
+    `displayTimeoutIndex`, so this select reflects an app change live (snapshot +
+    `solixReading` events). A value we set is shown optimistically.
 
     Two honest limitations (no code can fix without more reversing): (1) there is NO
     readable seed for the current value, so on restart it is unknown until the next
-    change rather than showing a possibly-stale guess. (2) "Never" (always-on) is
-    deliberately omitted: the app sets it via a SEPARATE path (no a5 command — verified
-    live), so it neither syncs from the app nor round-trips, and offering it would just
-    look broken. Both would need the same blutter+confirm treatment the SOC write got.
+    change rather than showing a possibly-stale guess. (2) Setting "Never" IN THE APP
+    uses a separate non-a5 path we can't see, so an app→Never change won't reflect here
+    (it holds the last value); HA→Never (the a5=0 write) and every timed change both
+    ways do work.
     """
 
     _attr_has_entity_name = True
