@@ -236,6 +236,24 @@ SOLIX_BATTERY_METRICS: dict[str, dict[str, Any]] = {
         "icon": "mdi:power-socket-uk",
         "precision": 0,
     },
+    # Configured max home load (W), from state_info (= get_site_device_param max_load).
+    "maxLoad": {
+        "name": "Max Home Load",
+        "device_class": SensorDeviceClass.POWER,
+        "unit": "W",
+        "icon": "mdi:home-lightning-bolt-outline",
+        "precision": 0,
+        "enabled_default": False,
+    },
+}
+
+# The Solarbank's operating (EMS) mode from the `state_info` `mode` value (live-mapped).
+SOLIX_MODE_LABELS: dict[int, str] = {
+    1: "Custom",
+    2: "Self-Consumption",
+    4: "Rapid Charging",
+    7: "Smart",
+    8: "Dynamic Tariff",
 }
 
 
@@ -332,13 +350,16 @@ async def async_setup_entry(
     # capacity; None outside its own mode).
     entities.extend(EufySolixTimeToFullSensor(coordinator, sn) for sn in batteries)
     entities.extend(EufySolixTimeToEmptySensor(coordinator, sn) for sn in batteries)
+    # Operating (EMS) mode from the state_info push, as a labelled enum.
+    entities.extend(EufySolixModeSensor(coordinator, sn) for sn in batteries)
     async_add_entities(entities)
 
-    # Raw channel diagnostics for EVERY Solix device (meter AND Solarbank), added LAZILY
-    # as each `channel_<hex>` first appears in a solixReading. The named metrics above
-    # cover the confirmed fields; these raw channels expose everything else (PV strings,
-    # currents, export energy) until each is confirmed. Present channels are added now,
-    # the rest as they arrive. Disabled by default to avoid clutter.
+    # Raw diagnostics for EVERY Solix device, added LAZILY as each raw key first
+    # appears in a solixReading: `channel_<hex>` (param_info measurements not yet
+    # named) AND `state_<hex>` (state_info SETTINGS tags not yet named — the
+    # mapping-in-progress ones, e.g. the discharge/charge limits). The named metrics
+    # above cover the confirmed fields; these expose the rest for correlation.
+    # Disabled by default to avoid clutter.
     seen_channels: set[tuple[str, str]] = set()
 
     @callback
@@ -346,7 +367,7 @@ async def async_setup_entry(
         fresh = [
             ch
             for ch in values
-            if ch.startswith("channel_") and (sn, ch) not in seen_channels
+            if ch.startswith(("channel_", "state_")) and (sn, ch) not in seen_channels
         ]
         for ch in fresh:
             seen_channels.add((sn, ch))
@@ -682,8 +703,11 @@ class EufySolixChannelSensor(SensorEntity):
         dev = coordinator.solix_devices.get(sn, {})
         self._value = (dev.get("values") or {}).get(channel)
         self._attr_unique_id = f"solix_{sn}_{channel}"
-        # "channel_a8" -> "Channel A8"
-        self._attr_name = f"Channel {channel.removeprefix('channel_').upper()}"
+        # "channel_a8" -> "Channel A8"; "state_a5" -> "State A5"
+        if channel.startswith("state_"):
+            self._attr_name = f"State {channel.removeprefix('state_').upper()}"
+        else:
+            self._attr_name = f"Channel {channel.removeprefix('channel_').upper()}"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"solix:{sn}")},
             name=dev.get("name") or sn,
@@ -791,6 +815,67 @@ class EufySolixBatteryStatusSensor(SensorEntity):
         values = data.get("values") or {}
         if "batteryPower" in values:
             self._power = values["batteryPower"]
+            self.async_write_ha_state()
+
+
+class EufySolixModeSensor(SensorEntity):
+    """
+    The Solarbank's operating (EMS) mode, as a labelled enum-style string.
+
+    Custom / Self-Consumption / Rapid Charging / Smart / Dynamic Tariff — from the
+    `state_info` push (`mode`), mapped to a label (live-confirmed). An unknown code
+    renders as `Mode <n>` rather than dropping, so a new firmware mode stays visible.
+    """
+
+    # Not an ENUM device_class: an unmapped code renders as "Mode <n>", which an ENUM
+    # (value must be in _attr_options) would reject — a string sensor shows it fine.
+    _attr_has_entity_name = True
+    _attr_icon = "mdi:tune-variant"
+
+    def __init__(self, coordinator: EufySdkDataUpdateCoordinator, sn: str) -> None:
+        """Bind to a Solix battery device; seed the mode from its telemetry snapshot."""
+        self._coordinator = coordinator
+        self._sn = sn
+        dev = coordinator.solix_devices.get(sn, {})
+        self._mode = (dev.get("values") or {}).get("mode")
+        self._attr_unique_id = f"solix_{sn}_mode"
+        self._attr_name = "Operating Mode"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"solix:{sn}")},
+            name=dev.get("name") or sn,
+            manufacturer="Anker Solix",
+            model=dev.get("productCode"),
+            sw_version=dev.get("firmware"),
+            serial_number=sn,
+        )
+
+    @property
+    def native_value(self) -> str | None:
+        """The mode label (or `Mode <n>` for an unmapped code; None until seen)."""
+        if self._mode is None:
+            return None
+        code = int(self._mode)
+        return SOLIX_MODE_LABELS.get(code, f"Mode {code}")
+
+    @property
+    def available(self) -> bool:
+        """Available while the bridge still lists this Solix device."""
+        return self._sn in getattr(self._coordinator, "solix_devices", {})
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to bridge events for live mode updates."""
+        await super().async_added_to_hass()
+        self.async_on_remove(self.hass.bus.async_listen(EVENT_TYPE, self._handle_event))
+
+    @callback
+    def _handle_event(self, event: Event) -> None:
+        """Update from a `solixReading` carrying `mode` for this device."""
+        data = event.data
+        if data.get("event") != "solixReading" or data.get("deviceSn") != self._sn:
+            return
+        values = data.get("values") or {}
+        if "mode" in values:
+            self._mode = values["mode"]
             self.async_write_ha_state()
 
 
