@@ -23,9 +23,10 @@ if TYPE_CHECKING:
     from .data import EufySdkConfigEntry
 
 EVENT_TYPE = f"{DOMAIN}_event"
-# SOC limits change rarely and the b5 telemetry only carries them on a settings frame,
-# so back the live events with a slow authoritative HTTP re-read (seed + this interval).
-SOC_REFRESH = timedelta(minutes=5)
+# The b5 telemetry only carries the limits on a settings frame (unreliable), so the HTTP
+# read is the dependable path: seed on add + re-read on this interval so an app-side
+# change reflects within it even when no b5 event arrives (SOC limits change rarely).
+SOC_REFRESH = timedelta(seconds=60)
 
 # The manifest carries no min/max, so pick a sane range from the value's `kind`.
 _RANGE_BY_KIND = {"percent": (0, 100), "seconds": (0, 86400), "degrees": (0, 360)}
