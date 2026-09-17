@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.const import EntityCategory
 from homeassistant.core import callback
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers.event import async_track_time_interval
 
 from .const import DOMAIN
 from .entity import EufySdkPropertyEntity, classify
@@ -23,10 +22,6 @@ if TYPE_CHECKING:
     from .data import EufySdkConfigEntry
 
 EVENT_TYPE = f"{DOMAIN}_event"
-# The minimum-SOC selection is only readable by re-polling get_power_cutoff (no
-# push). Refresh it on its own short cadence, not the slow (default 10-min)
-# coordinator cycle, so an app change shows within a couple of minutes.
-MIN_SOC_REFRESH = timedelta(minutes=2)
 
 # Solarbank display screen-off timeout — set by an MQTT command (cmd 17, ff09 msgtype
 # 0x68, tag a5=[01,index]), live-captured + write-verified on an AE103. The value is a
@@ -48,7 +43,7 @@ DISPLAY_TIMEOUT_LABEL: dict[int, str] = {v: k for k, v in DISPLAY_TIMEOUT_INDEX.
 
 
 async def async_setup_entry(
-    hass: HomeAssistant,  # noqa: ARG001
+    hass: HomeAssistant,
     entry: EufySdkConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
@@ -60,13 +55,25 @@ async def async_setup_entry(
         for spec in entry.runtime_data.properties.get(sn, [])
         if classify(spec) == "select"
     ]
-    # Anker Solix: Solarbank display screen-off timeout + minimum SOC.
+    # Anker Solix: Solarbank display screen-off timeout. (The minimum-SOC / discharge
+    # cutoff is now the Discharge Limit slider on the number platform.)
     solix = getattr(coordinator, "solix_devices", {}) or {}
     for sn, dev in solix.items():
         if "battery" in dev.get("capabilities", []):
             entities.append(EufySolixScreenOffSelect(coordinator, sn))
-            entities.append(EufySolixMinSocSelect(coordinator, sn))
+            # Retire the old "Minimum Battery SOC" select (superseded by the Discharge
+            # Limit slider) so it doesn't linger as an unavailable entity after upgrade.
+            _remove_stale_min_soc(hass, sn)
     async_add_entities(entities)
+
+
+@callback
+def _remove_stale_min_soc(hass: HomeAssistant, sn: str) -> None:
+    """Drop the retired `solix_<sn>_min_soc` select from the registry, if present."""
+    registry = er.async_get(hass)
+    entity_id = registry.async_get_entity_id("select", DOMAIN, f"solix_{sn}_min_soc")
+    if entity_id:
+        registry.async_remove(entity_id)
 
 
 class EufySdkSelect(EufySdkPropertyEntity, SelectEntity):
@@ -192,101 +199,5 @@ class EufySolixScreenOffSelect(SelectEntity):
             raise HomeAssistantError(msg)
         client = self._coordinator.config_entry.runtime_data.client
         await client.set_solix_display_timeout(self._sn, index)
-        self._current = option
-        self.async_write_ha_state()
-
-
-class EufySolixMinSocSelect(SelectEntity):
-    """
-    A Solarbank's minimum battery SOC (discharge cutoff), as a select.
-
-    The options are NOT hard-coded: they come from the device's own preset list
-    (`get_power_cutoff` — each `output_cutoff_data` percent, its `id`, and which is
-    `is_selected`). The label is the percent (e.g. "10%"); selecting one writes its `id`
-    back. The selection is read back from the device, so a change made outside HA (the
-    app) IS reflected: rather than relying on HA's implicit entity polling (which proved
-    unreliable for these standalone Solix entities), the refresh is driven off the
-    coordinator's own update cycle — the trigger the Solix sensors use — so it re-reads
-    every poll interval. Solix is a separate account/backend (standalone entity).
-    """
-
-    _attr_has_entity_name = True
-    _attr_name = "Minimum Battery SOC"
-    _attr_icon = "mdi:battery-arrow-down"
-    _attr_entity_category = EntityCategory.CONFIG
-    _attr_should_poll = False  # driven off the coordinator cycle
-
-    def __init__(self, coordinator: EufySdkDataUpdateCoordinator, sn: str) -> None:
-        """Bind to a Solix Solarbank; build its Anker Solix HA device_info."""
-        self._coordinator = coordinator
-        self._sn = sn
-        self._id_by_label: dict[str, int] = {}
-        self._current: str | None = None
-        self._attr_options = []
-        dev = coordinator.solix_devices.get(sn, {})
-        self._attr_unique_id = f"solix_{sn}_min_soc"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, f"solix:{sn}")},
-            name=dev.get("name") or sn,
-            manufacturer="Anker Solix",
-            model=dev.get("productCode"),
-            sw_version=dev.get("firmware"),
-            serial_number=sn,
-        )
-
-    @property
-    def available(self) -> bool:
-        """Available while the bridge still lists this Solix device."""
-        return self._sn in getattr(self._coordinator, "solix_devices", {})
-
-    @property
-    def current_option(self) -> str | None:
-        """The label of the currently selected cutoff preset."""
-        return self._current
-
-    async def async_added_to_hass(self) -> None:
-        """Read once now, then re-poll on a dedicated short interval."""
-        await super().async_added_to_hass()
-        self.async_on_remove(
-            async_track_time_interval(self.hass, self._timed_refresh, MIN_SOC_REFRESH)
-        )
-        await self._refresh()
-
-    @callback
-    def _timed_refresh(self, _now: Any) -> None:
-        """Interval tick — re-read the cutoff selection off the event loop."""
-        self.hass.async_create_task(self._refresh())
-
-    async def _refresh(self) -> None:
-        """Poll the cutoff presets + selection; write state if it changed."""
-        client = self._coordinator.config_entry.runtime_data.client
-        options = await client.get_solix_power_cutoff(self._sn)
-        id_by_label: dict[str, int] = {}
-        current: str | None = None
-        for opt in options:
-            pct = opt.get("output_cutoff_data")
-            oid = opt.get("id")
-            if pct is None or oid is None:
-                continue
-            label = f"{int(pct)}%"
-            id_by_label[label] = int(oid)
-            if opt.get("is_selected"):
-                current = label
-        if id_by_label and (
-            id_by_label != self._id_by_label or current != self._current
-        ):
-            self._id_by_label = id_by_label
-            self._attr_options = list(id_by_label)
-            self._current = current
-            self.async_write_ha_state()
-
-    async def async_select_option(self, option: str) -> None:
-        """Write the chosen cutoff preset back by its device id."""
-        cutoff_id = self._id_by_label.get(option)
-        if cutoff_id is None:
-            msg = f"unknown minimum-SOC option: {option}"
-            raise HomeAssistantError(msg)
-        client = self._coordinator.config_entry.runtime_data.client
-        await client.set_solix_power_cutoff(self._sn, cutoff_id)
         self._current = option
         self.async_write_ha_state()
