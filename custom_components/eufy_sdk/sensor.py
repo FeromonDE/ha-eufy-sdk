@@ -9,7 +9,7 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorStateClass,
 )
-from homeassistant.const import EntityCategory
+from homeassistant.const import EntityCategory, UnitOfTime
 from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceInfo
 
@@ -32,6 +32,12 @@ if TYPE_CHECKING:
 
 EVENT_TYPE = f"{DOMAIN}_event"
 GO2RTC_RTSP_PORT = 8554  # go2rtc RTSP listener in the bridge image
+
+# Nominal usable capacity of the Anker Solix Solarbank 4 E5000 Pro (AE103) — the "E5000"
+# in the name. Used to derive the time-to-full / time-to-empty countdown from SOC + W.
+# NOTE: expansion packs (each ~5000 Wh) are NOT accounted for yet; a stacked system runs
+# longer than this single-pack figure implies.
+SOLARBANK_CAPACITY_WH = 5000  # Wh
 
 # Anker Solix Smart Meter (AE1X0) telemetry metrics.
 #
@@ -232,6 +238,7 @@ SOLIX_BATTERY_METRICS: dict[str, dict[str, Any]] = {
     },
 }
 
+
 def _is_sensor(spec: dict) -> bool:
     """Return True for classify()=="sensor", plus bitfields with no bespoke switches."""
     kind = classify(spec)
@@ -320,6 +327,11 @@ async def async_setup_entry(
     # A Charging/Discharging/Idle status per battery (from signed battery power), with
     # an icon that reflects the state.
     entities.extend(EufySolixBatteryStatusSensor(coordinator, sn) for sn in batteries)
+    # A live countdown per battery: time-to-full while charging, time-to-empty while
+    # discharging (each derived from SOC + charge/discharge power against the pack
+    # capacity; None outside its own mode).
+    entities.extend(EufySolixTimeToFullSensor(coordinator, sn) for sn in batteries)
+    entities.extend(EufySolixTimeToEmptySensor(coordinator, sn) for sn in batteries)
     async_add_entities(entities)
 
     # Raw channel diagnostics for EVERY Solix device (meter AND Solarbank), added LAZILY
@@ -615,7 +627,9 @@ class EufySolixSensor(SensorEntity):
         # on the periodic "info" frame, not the fast realtime one). The bridge keeps the
         # last value in its telemetry snapshot, which the coordinator polls — so also
         # refresh from it; a metric whose live event is missed still shows.
-        self.async_on_remove(self._coordinator.async_add_listener(self._refresh_from_snapshot))
+        self.async_on_remove(
+            self._coordinator.async_add_listener(self._refresh_from_snapshot)
+        )
         self._refresh_from_snapshot()
 
     @callback
@@ -778,3 +792,177 @@ class EufySolixBatteryStatusSensor(SensorEntity):
         if "batteryPower" in values:
             self._power = values["batteryPower"]
             self.async_write_ha_state()
+
+
+class _EufySolixTimeSensor(SensorEntity):
+    """
+    Base for the Solarbank time-to-full / time-to-empty countdown sensors.
+
+    Both derive a duration (in minutes) from the pack's state of charge and its
+    charge/discharge power against the nominal capacity, so they share the same
+    plumbing: seed from the `solix.devices` snapshot, then track `batterySoc`,
+    `batteryPower`, `chargePower` and `dischargePower` from `solixReading` events
+    (and the coordinator's telemetry snapshot). Each subclass turns those inputs
+    into its own countdown in `native_value`; outside its own mode it reads None.
+    """
+
+    _attr_has_entity_name = True
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_native_unit_of_measurement = UnitOfTime.MINUTES
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    # Rate floor: below this the countdown blows up toward infinity (and standby noise
+    # would make it jitter wildly), so we report Unknown instead.
+    _MIN_POWER_W = 10
+    # (event/snapshot key -> instance attribute) for the telemetry we track.
+    _INPUTS: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("batterySoc", "_soc"),
+        ("batteryPower", "_battery_power"),
+        ("chargePower", "_charge_power"),
+        ("dischargePower", "_discharge_power"),
+    )
+
+    def __init__(self, coordinator: EufySdkDataUpdateCoordinator, sn: str) -> None:
+        """Bind to a Solix battery device; seed inputs + Anker Solix HA device_info."""
+        self._coordinator = coordinator
+        self._sn = sn
+        dev = coordinator.solix_devices.get(sn, {})
+        values = dev.get("values") or {}
+        self._soc = values.get("batterySoc")
+        self._battery_power = values.get("batteryPower")
+        self._charge_power = values.get("chargePower")
+        self._discharge_power = values.get("dischargePower")
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"solix:{sn}")},
+            name=dev.get("name") or sn,
+            manufacturer="Anker Solix",
+            model=dev.get("productCode"),
+            sw_version=dev.get("firmware"),
+            serial_number=sn,
+        )
+
+    @property
+    def available(self) -> bool:
+        """Available while the bridge still lists this Solix device."""
+        return self._sn in getattr(self._coordinator, "solix_devices", {})
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to live events AND the coordinator's device snapshot."""
+        await super().async_added_to_hass()
+        self.async_on_remove(self.hass.bus.async_listen(EVENT_TYPE, self._handle_event))
+        self.async_on_remove(
+            self._coordinator.async_add_listener(self._refresh_from_snapshot)
+        )
+        self._refresh_from_snapshot()
+
+    @callback
+    def _refresh_from_snapshot(self) -> None:
+        """Adopt the latest inputs from the coordinator's Solix snapshot, if newer."""
+        dev = self._coordinator.solix_devices.get(self._sn, {})
+        values = dev.get("values") or {}
+        if self._adopt(values):
+            self.async_write_ha_state()
+
+    @callback
+    def _handle_event(self, event: Event) -> None:
+        """Update from a `solixReading` for this device carrying any tracked input."""
+        data = event.data
+        if data.get("event") != "solixReading" or data.get("deviceSn") != self._sn:
+            return
+        if self._adopt(data.get("values") or {}):
+            self.async_write_ha_state()
+
+    def _adopt(self, values: dict[str, Any]) -> bool:
+        """Copy any present tracked inputs from `values`; return True if any changed."""
+        changed = False
+        for key, attr in self._INPUTS:
+            if key in values and values[key] != getattr(self, attr):
+                setattr(self, attr, values[key])
+                changed = True
+        return changed
+
+    @staticmethod
+    def _minutes(hours: float) -> int:
+        """Whole minutes from an hours figure (DURATION-in-minutes renders cleanly)."""
+        return round(hours * 60)
+
+
+class EufySolixTimeToFullSensor(_EufySolixTimeSensor):
+    """
+    Estimated minutes until the Solarbank is fully charged (charging only).
+
+    remaining_wh = (100 - SOC)/100 * capacity; minutes = remaining_wh / charge_W.
+    Reads None (Unknown) when not charging, when SOC ≥ 100, or when the charge rate
+    is below `_MIN_POWER_W`. The rate prefers the unsigned `chargePower`, falling
+    back to positive `batteryPower` when `chargePower` is missing/zero.
+    """
+
+    _attr_icon = "mdi:battery-charging"
+
+    def __init__(self, coordinator: EufySdkDataUpdateCoordinator, sn: str) -> None:
+        """Bind to a Solix battery device."""
+        super().__init__(coordinator, sn)
+        self._attr_unique_id = f"solix_{sn}_time_to_full"
+        self._attr_name = "Battery Time to Full"
+
+    def _charge_watts(self) -> float | None:
+        """Charge rate: unsigned `chargePower`, else positive `batteryPower`."""
+        cp = self._charge_power
+        if cp is not None and cp > 0:
+            return cp
+        bp = self._battery_power
+        if bp is not None and bp > 0:
+            return bp
+        return None
+
+    @property
+    def native_value(self) -> int | None:
+        """Minutes to full while charging; None otherwise."""
+        soc = self._soc
+        if soc is None or soc >= 100:  # noqa: PLR2004 - 100% = full, nothing to count
+            return None
+        watts = self._charge_watts()
+        if watts is None or watts < self._MIN_POWER_W:
+            return None
+        remaining_wh = (100 - soc) / 100 * SOLARBANK_CAPACITY_WH
+        return self._minutes(remaining_wh / watts)
+
+
+class EufySolixTimeToEmptySensor(_EufySolixTimeSensor):
+    """
+    Estimated minutes until the Solarbank is empty (discharging only).
+
+    used_wh = SOC/100 * capacity; minutes = used_wh / discharge_W. Reads None
+    (Unknown) when not discharging, when SOC ≤ 0, or when the discharge rate is
+    below `_MIN_POWER_W`. The rate prefers the unsigned `dischargePower`, falling
+    back to the magnitude of negative `batteryPower` when it's missing/zero.
+    """
+
+    _attr_icon = "mdi:battery-arrow-down"
+
+    def __init__(self, coordinator: EufySdkDataUpdateCoordinator, sn: str) -> None:
+        """Bind to a Solix battery device."""
+        super().__init__(coordinator, sn)
+        self._attr_unique_id = f"solix_{sn}_time_to_empty"
+        self._attr_name = "Battery Time to Empty"
+
+    def _discharge_watts(self) -> float | None:
+        """Discharge rate: unsigned `dischargePower`, else |negative `batteryPower`|."""
+        dp = self._discharge_power
+        if dp is not None and dp > 0:
+            return dp
+        bp = self._battery_power
+        if bp is not None and bp < 0:
+            return -bp
+        return None
+
+    @property
+    def native_value(self) -> int | None:
+        """Minutes to empty while discharging; None otherwise."""
+        soc = self._soc
+        if soc is None or soc <= 0:
+            return None
+        watts = self._discharge_watts()
+        if watts is None or watts < self._MIN_POWER_W:
+            return None
+        used_wh = soc / 100 * SOLARBANK_CAPACITY_WH
+        return self._minutes(used_wh / watts)
