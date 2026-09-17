@@ -10,7 +10,7 @@ from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceInfo
 
 from .bespoke import BITFIELD_SWITCHES
-from .const import DOMAIN
+from .const import DOMAIN, LOGGER
 from .entity import EufySdkPropertyEntity, classify, has_capability, is_setting
 from .light import LIGHT_OWNED_PROPS
 
@@ -147,9 +147,19 @@ class EufySolixLightSwitch(SwitchEntity):
     def _handle_event(self, event: Event) -> None:
         """Update from a `solixReading` carrying `lightOn` for this device."""
         data = event.data
-        if data.get("event") != "solixReading" or data.get("deviceSn") != self._sn:
+        if data.get("event") != "solixReading":
             return
         values = data.get("values") or {}
+        if "lightOn" in values:
+            LOGGER.debug(
+                "solix light event: sn=%s self=%s match=%s lightOn=%s",
+                data.get("deviceSn"),
+                self._sn,
+                data.get("deviceSn") == self._sn,
+                values.get("lightOn"),
+            )
+        if data.get("deviceSn") != self._sn:
+            return
         if "lightOn" in values:
             self._on = values["lightOn"]
             self.async_write_ha_state()
