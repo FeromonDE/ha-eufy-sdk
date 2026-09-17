@@ -19,19 +19,18 @@ if TYPE_CHECKING:
     from .coordinator import EufySdkDataUpdateCoordinator
     from .data import EufySdkConfigEntry
 
-# Solarbank display screen-off timeout: the app's dropdown, mapped to `screen_off_time`
-# seconds. Unit confirmed in libapp.so (`_describeScreenOffSeconds`). "Never"
-# (always-on) is a device-defined sentinel that is NOT hard-coded here: it is learned
-# from a readback while the device is in that mode (see EufySolixScreenOffSelect), so
-# no value is guessed.
-SCREEN_OFF_NEVER = "Never"
-SCREEN_OFF_OPTIONS: dict[str, int] = {
-    "10s": 10,
-    "20s": 20,
-    "30s": 30,
-    "1m": 60,
-    "5m": 300,
-    "30m": 1800,
+# Solarbank display screen-off timeout — set by an MQTT command (cmd 17, ff09 msgtype
+# 0x68, tag a5=[01,index]), live-captured + write-verified on an AE103. The value is a
+# 1-based index into the app dropdown. "Never" is a SEPARATE command (an HTTP
+# low-brightness mode, not yet reversed), so it's omitted. The current value isn't
+# exposed by the cloud (HTTP/telemetry), so the select is optimistic.
+DISPLAY_TIMEOUT_INDEX: dict[str, int] = {
+    "10s": 1,
+    "20s": 2,
+    "30s": 3,
+    "1m": 4,
+    "5m": 5,
+    "30m": 6,
 }
 
 
@@ -93,29 +92,26 @@ class EufySdkSelect(EufySdkPropertyEntity, SelectEntity):
 
 class EufySolixScreenOffSelect(SelectEntity):
     """
-    A Solarbank's display screen-off timeout (10s/20s/30s/1m/5m/30m/Never).
+    A Solarbank's display screen-off timeout (10s/20s/30s/1m/5m/30m).
 
-    Solix is a separate account/backend, so this is a standalone entity (not a
-    coordinator/property one): it reads the live `screen_off_time` (seconds) via the
-    bridge and writes the chosen option back. The timed options map 1:1 to seconds;
-    "Never" (always-on) is a device sentinel that is NOT assumed — it is learned from a
-    readback when the device is in that mode, then written back verbatim.
+    Solix is a separate account/backend, so this is a standalone entity. The timeout is
+    set by an MQTT command (write-verified live) carrying a 1-based dropdown index.
+    The current value is not exposed by the cloud, so the select is OPTIMISTIC: it shows
+    the value it last set (`None` until picked). "Never" is separate, omitted here.
     """
 
     _attr_has_entity_name = True
     _attr_name = "Display Timeout"
     _attr_icon = "mdi:monitor-off"
     _attr_entity_category = EntityCategory.CONFIG
-    _attr_options: ClassVar[list[str]] = [*SCREEN_OFF_OPTIONS, SCREEN_OFF_NEVER]
+    _attr_should_poll = False
+    _attr_options: ClassVar[list[str]] = list(DISPLAY_TIMEOUT_INDEX)
 
     def __init__(self, coordinator: EufySdkDataUpdateCoordinator, sn: str) -> None:
         """Bind to a Solix Solarbank; build its Anker Solix HA device_info."""
         self._coordinator = coordinator
         self._sn = sn
-        self._seconds: int | None = None
-        # The device's "Never" sentinel, learned from a readback (None until observed).
-        self._never_value: int | None = None
-        self._by_seconds = {v: k for k, v in SCREEN_OFF_OPTIONS.items()}
+        self._current: str | None = None
         dev = coordinator.solix_devices.get(sn, {})
         self._attr_unique_id = f"solix_{sn}_screen_off_time"
         self._attr_device_info = DeviceInfo(
@@ -134,46 +130,18 @@ class EufySolixScreenOffSelect(SelectEntity):
 
     @property
     def current_option(self) -> str | None:
-        """The label for the live screen_off_time (None until first read)."""
-        if self._seconds is None:
-            return None
-        label = self._by_seconds.get(self._seconds)
-        if label is not None:
-            return label
-        # An unrecognised value means the device is in its always-on mode — learn the
-        # exact sentinel from this readback so we can write it back later.
-        self._never_value = self._seconds
-        return SCREEN_OFF_NEVER
-
-    async def async_update(self) -> None:
-        """Poll the live screen_off_time from the device."""
-        client = self._coordinator.config_entry.runtime_data.client
-        attrs = await client.get_solix_device_attrs(self._sn, ["screen_off_time"])
-        raw = attrs.get("screen_off_time")
-        if raw is not None:
-            try:
-                self._seconds = int(raw)
-            except (TypeError, ValueError):
-                self._seconds = None
+        """The last value we set (optimistic; the device doesn't report it)."""
+        return self._current
 
     async def async_select_option(self, option: str) -> None:
-        """Write the chosen timeout back (seconds, or the sentinel for Never)."""
+        """Send the chosen timeout as its 1-based index via the bridge MQTT command."""
+        index = DISPLAY_TIMEOUT_INDEX.get(option)
+        if index is None:
+            msg = f"unknown display timeout: {option}"
+            raise HomeAssistantError(msg)
         client = self._coordinator.config_entry.runtime_data.client
-        if option == SCREEN_OFF_NEVER:
-            if self._never_value is None:
-                # No value guessed: we can only write "Never" once we've read what the
-                # device uses for it. Ask the user to set it once in the Anker app.
-                msg = (
-                    "The 'Never' value has not been read from this device yet. "
-                    "Set the display timeout to Never once in the Anker app, then HA "
-                    "will learn it and this option will work."
-                )
-                raise HomeAssistantError(msg)
-            seconds = self._never_value
-        else:
-            seconds = SCREEN_OFF_OPTIONS[option]
-        await client.set_solix_screen_off_time(self._sn, seconds)
-        self._seconds = seconds
+        await client.set_solix_display_timeout(self._sn, index)
+        self._current = option
         self.async_write_ha_state()
 
 

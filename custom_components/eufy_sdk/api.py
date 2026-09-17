@@ -218,9 +218,9 @@ class EufySdkApiClient:
         reply = await self.rpc("solix.getDeviceAttrs", deviceSn=sn, keys=keys or [])
         return reply.get("attributes") or {}
 
-    async def set_solix_screen_off_time(self, sn: str, seconds: int) -> None:
-        """Set a Solarbank display screen-off timeout, in seconds."""
-        await self.rpc("solix.setScreenOffTime", deviceSn=sn, seconds=seconds)
+    async def set_solix_display_timeout(self, sn: str, index: int) -> None:
+        """Set a Solarbank display screen-off timeout by 1-based index (MQTT)."""
+        await self.rpc("solix.setDisplayTimeout", deviceSn=sn, index=index)
 
     async def get_solix_power_cutoff(
         self, sn: str, site_id: str = ""
