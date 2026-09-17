@@ -10,7 +10,6 @@ from homeassistant.core import callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import DOMAIN
 from .entity import EufySdkPropertyEntity, classify
@@ -32,9 +31,9 @@ EVENT_TYPE = f"{DOMAIN}_event"
 # a5 command on the device /req topic, which the bridge co-subscribes to — so the SDK
 # emits `displayTimeoutIndex` and this select reflects an app change (except
 # "Never", which sends no a5).
-# "Never" (always-on) is index 0 — the same a5=[01,index] command, not a separate
-# path (confirmed from the app's picker option list + the ff09 a5 encoding). 30s/5m
-# were live-captured (a5=01 03 / 01 05) as MQTT /req commands — NOT an HTTP write.
+# 1-based dropdown index → a5=[01,index] MQTT /req command (30s/5m live-captured as
+# a5=01 03 / 01 05 — an MQTT write, not HTTP). "Never" is intentionally absent: the app
+# sets it via a separate non-a5 path we haven't reversed, so it can't round-trip.
 DISPLAY_TIMEOUT_INDEX: dict[str, int] = {
     "10s": 1,
     "20s": 2,
@@ -42,7 +41,6 @@ DISPLAY_TIMEOUT_INDEX: dict[str, int] = {
     "1m": 4,
     "5m": 5,
     "30m": 6,
-    "Never": 0,
 }
 DISPLAY_TIMEOUT_LABEL: dict[int, str] = {v: k for k, v in DISPLAY_TIMEOUT_INDEX.items()}
 
@@ -115,19 +113,24 @@ class EufySdkSelect(EufySdkPropertyEntity, SelectEntity):
         await self.write(value)
 
 
-class EufySolixScreenOffSelect(SelectEntity, RestoreEntity):
+class EufySolixScreenOffSelect(SelectEntity):
     """
-    A Solarbank's display screen-off timeout (10s/20s/30s/1m/5m/30m/Never).
+    A Solarbank's display screen-off timeout (10s/20s/30s/1m/5m/30m).
 
     Solix is a separate account/backend, so this is a standalone entity. The timeout is
-    set by an MQTT `…/req` command carrying a 1-based dropdown index (Never = index 0) —
-    NOT an HTTP write (live-captured). It isn't in any HTTP read or passive telemetry
+    set by an MQTT `…/req` command carrying a 1-based dropdown index — NOT an HTTP write
+    (live-captured: 30s=a5:03, 5m=a5:05). It isn't in any HTTP read or passive telemetry
     frame, but an app change publishes that same command on the device `/req` topic,
     which the bridge co-subscribes to — the SDK surfaces it as `displayTimeoutIndex`, so
-    this select reflects an app change (from the snapshot + live `solixReading` events).
-    A value we set is shown optimistically. Because there is no seed read, the last
-    known value is restored across restarts (RestoreEntity) so the UI isn't blank until
-    the next change; it's unknown only before the very first observation.
+    this select reflects an app change live (from the snapshot + `solixReading` events).
+    A value we set is shown optimistically.
+
+    Two honest limitations (no code can fix without more reversing): (1) there is NO
+    readable seed for the current value, so on restart it is unknown until the next
+    change rather than showing a possibly-stale guess. (2) "Never" (always-on) is
+    deliberately omitted: the app sets it via a SEPARATE path (no a5 command — verified
+    live), so it neither syncs from the app nor round-trips, and offering it would just
+    look broken. Both would need the same blutter+confirm treatment the SOC write got.
     """
 
     _attr_has_entity_name = True
@@ -170,13 +173,8 @@ class EufySolixScreenOffSelect(SelectEntity, RestoreEntity):
         return self._current
 
     async def async_added_to_hass(self) -> None:
-        """Restore the last value, then reflect app changes: events + the snapshot."""
+        """Reflect an app timeout change: live events + the coordinator snapshot."""
         await super().async_added_to_hass()
-        # No seed read exists, so fall back to the last value we saw before restart.
-        if self._current is None:
-            last = await self.async_get_last_state()
-            if last is not None and last.state in DISPLAY_TIMEOUT_INDEX:
-                self._current = last.state
         self.async_on_remove(self.hass.bus.async_listen(EVENT_TYPE, self._handle_event))
         self.async_on_remove(
             self._coordinator.async_add_listener(self._refresh_from_snapshot)
