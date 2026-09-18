@@ -11,7 +11,7 @@ from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.event import async_track_time_interval
 
-from .const import DOMAIN
+from .const import CONF_SOC_REFRESH, DEFAULT_SOC_REFRESH_SEC, DOMAIN
 from .entity import EufySdkPropertyEntity, classify, has_capability
 from .light import LIGHT_OWNED_PROPS
 
@@ -23,10 +23,6 @@ if TYPE_CHECKING:
     from .data import EufySdkConfigEntry
 
 EVENT_TYPE = f"{DOMAIN}_event"
-# The b5 telemetry only carries the limits on a settings frame (unreliable), so the HTTP
-# read is the dependable path: seed on add + re-read on this interval so an app-side
-# change reflects within it even when no b5 event arrives (SOC limits change rarely).
-SOC_REFRESH = timedelta(seconds=60)
 
 # The manifest carries no min/max, so pick a sane range from the value's `kind`.
 _RANGE_BY_KIND = {"percent": (0, 100), "seconds": (0, 86400), "degrees": (0, 360)}
@@ -210,12 +206,18 @@ class EufySolixSocLimitNumber(NumberEntity):
         )
         self._refresh_from_snapshot()
         # b5 telemetry only carries the limits on a settings frame (pushed on change,
-        # not periodically), so seed from the cloud read + keep a slow HTTP backstop;
-        # the slider then shows the real value on load and stays right even if the MQTT
-        # push is quiet. Live b5 events (_handle_event) still update it immediately.
+        # not periodically), so seed from the cloud read + keep an HTTP backstop at the
+        # user-configured cadence (CONF_SOC_REFRESH, default 60 s) — the slider shows
+        # the real value on load and stays right when the push is quiet. Live b5 events
+        # (_handle_event) still update it immediately.
         await self._fetch_limit()
+        secs = self._coordinator.config_entry.options.get(
+            CONF_SOC_REFRESH, DEFAULT_SOC_REFRESH_SEC
+        )
         self.async_on_remove(
-            async_track_time_interval(self.hass, self._timed_refresh, SOC_REFRESH)
+            async_track_time_interval(
+                self.hass, self._timed_refresh, timedelta(seconds=secs)
+            )
         )
 
     @callback
