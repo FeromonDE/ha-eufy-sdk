@@ -17,5 +17,12 @@ DEFAULT_PORT = 3000
 CONF_POLL_INTERVAL = "poll_interval_minutes"
 DEFAULT_POLL_INTERVAL_MIN = 10
 
+# Options: how often HA re-reads a Solarbank's SOC limits from the cloud (seconds).
+# The discharge/charge limits arrive reliably only via this authoritative HTTP read
+# (the b5 telemetry carries them only on an occasional settings frame), so this is the
+# cadence an app-side SOC change reflects on the sliders.
+CONF_SOC_REFRESH = "soc_refresh_seconds"
+DEFAULT_SOC_REFRESH_SEC = 60
+
 # Schema version this integration targets (the bridge sends its own in `hello`/`ready`).
 SUPPORTED_SCHEMA = 1
