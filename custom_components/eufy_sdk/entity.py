@@ -6,6 +6,7 @@ import re
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.core import callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -15,6 +16,27 @@ from .coordinator import EufySdkDataUpdateCoordinator
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from homeassistant.core import HomeAssistant
+
+
+@callback
+def remove_stale_solix_entities(
+    hass: HomeAssistant, platform: str, *unique_ids: str
+) -> None:
+    """
+    Drop retired Solix entities from the registry by unique_id, if present.
+
+    Superseded Solix entities (e.g. a read-only sensor replaced by a writable slider,
+    or a select replaced by it) leave a registry row that otherwise lingers as an
+    unavailable entity after upgrade; each platform's setup calls this to clear its own.
+    """
+    registry = er.async_get(hass)
+    for uid in unique_ids:
+        entity_id = registry.async_get_entity_id(platform, DOMAIN, uid)
+        if entity_id:
+            registry.async_remove(entity_id)
+
 
 # A device→cloud settings change (e.g. camera enable/disable) lags the P2P write
 # by a few seconds. So on write we hold the just-written value optimistically and

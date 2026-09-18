@@ -11,7 +11,6 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import EntityCategory
 from homeassistant.core import callback
-from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
 
 from .bespoke import BITFIELD_SWITCHES
@@ -21,6 +20,7 @@ from .entity import (
     EufySdkPropertyEntity,
     classify,
     has_capability,
+    remove_stale_solix_entities,
 )
 from .light import LIGHT_HIDDEN_PROPS
 
@@ -248,7 +248,7 @@ SOLIX_BATTERY_METRICS: dict[str, dict[str, Any]] = {
     },
     # NOTE: the SOC discharge/charge limits are NOT sensors here — they are the writable
     # sliders on the number platform (EufySolixSocLimitNumber). The old read-only
-    # "Discharge Limit"/"Charge Limit" sensors are retired (_remove_stale_soc_sensors).
+    # sensors are retired via remove_stale_solix_entities in async_setup_entry.
 }
 
 # The Solarbank's operating (EMS) mode from the `state_info` `mode` value (live-mapped).
@@ -342,7 +342,9 @@ async def async_setup_entry(
         sn for sn, dev in solix.items() if "battery" in dev.get("capabilities", [])
     ]
     for sn in batteries:
-        _remove_stale_soc_sensors(hass, sn)
+        remove_stale_solix_entities(
+            hass, "sensor", f"solix_{sn}_dischargeLimit", f"solix_{sn}_chargeLimit"
+        )
     entities.extend(
         EufySolixSensor(coordinator, sn, metric, meta)
         for sn in batteries
@@ -394,17 +396,6 @@ async def async_setup_entry(
             _add_new_channels(sn, event.data.get("values") or {})
 
     entry.async_on_unload(hass.bus.async_listen(EVENT_TYPE, _on_solix_reading))
-
-
-@callback
-def _remove_stale_soc_sensors(hass: HomeAssistant, sn: str) -> None:
-    """Drop the retired read-only SOC-limit sensors (now the number sliders)."""
-    registry = er.async_get(hass)
-    for metric in ("dischargeLimit", "chargeLimit"):
-        uid = f"solix_{sn}_{metric}"
-        entity_id = registry.async_get_entity_id("sensor", DOMAIN, uid)
-        if entity_id:
-            registry.async_remove(entity_id)
 
 
 class EufySdkInfoSensor(EufySdkDeviceEntity, SensorEntity):

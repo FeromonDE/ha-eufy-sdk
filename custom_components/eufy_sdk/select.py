@@ -8,11 +8,10 @@ from homeassistant.components.select import SelectEntity
 from homeassistant.const import EntityCategory
 from homeassistant.core import callback
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
 
 from .const import DOMAIN
-from .entity import EufySdkPropertyEntity, classify
+from .entity import EufySdkPropertyEntity, classify, remove_stale_solix_entities
 
 if TYPE_CHECKING:
     from homeassistant.core import Event, HomeAssistant
@@ -68,17 +67,8 @@ async def async_setup_entry(
             entities.append(EufySolixScreenOffSelect(coordinator, sn))
             # Retire the old "Minimum Battery SOC" select (superseded by the Discharge
             # Limit slider) so it doesn't linger as an unavailable entity after upgrade.
-            _remove_stale_min_soc(hass, sn)
+            remove_stale_solix_entities(hass, "select", f"solix_{sn}_min_soc")
     async_add_entities(entities)
-
-
-@callback
-def _remove_stale_min_soc(hass: HomeAssistant, sn: str) -> None:
-    """Drop the retired `solix_<sn>_min_soc` select from the registry, if present."""
-    registry = er.async_get(hass)
-    entity_id = registry.async_get_entity_id("select", DOMAIN, f"solix_{sn}_min_soc")
-    if entity_id:
-        registry.async_remove(entity_id)
 
 
 class EufySdkSelect(EufySdkPropertyEntity, SelectEntity):
