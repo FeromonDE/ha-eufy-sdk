@@ -12,7 +12,12 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.event import async_track_time_interval
 
 from .const import CONF_SOC_REFRESH, DEFAULT_SOC_REFRESH_SEC, DOMAIN
-from .entity import EufySdkPropertyEntity, classify, has_capability
+from .entity import (
+    EufySdkPropertyEntity,
+    classify,
+    has_capability,
+    solix_devices_with,
+)
 from .light import LIGHT_OWNED_PROPS
 
 if TYPE_CHECKING:
@@ -52,11 +57,9 @@ async def async_setup_entry(
 
     # Anker Solix (separate account): a Solarbank's discharge/charge limits as sliders.
     # These write the cloud SOC block (param_type 27) and reflect live `b5` telemetry.
-    solix = getattr(coordinator, "solix_devices", {}) or {}
-    for sn, dev in solix.items():
-        if "battery" in dev.get("capabilities", []):
-            entities.append(EufySolixSocLimitNumber(coordinator, sn, SOC_DISCHARGE))
-            entities.append(EufySolixSocLimitNumber(coordinator, sn, SOC_CHARGE))
+    for sn, _ in solix_devices_with(coordinator, "battery"):
+        entities.append(EufySolixSocLimitNumber(coordinator, sn, SOC_DISCHARGE))
+        entities.append(EufySolixSocLimitNumber(coordinator, sn, SOC_CHARGE))
 
     async_add_entities(entities)
 

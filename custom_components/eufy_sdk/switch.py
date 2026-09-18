@@ -11,7 +11,13 @@ from homeassistant.helpers.device_registry import DeviceInfo
 
 from .bespoke import BITFIELD_SWITCHES
 from .const import DOMAIN
-from .entity import EufySdkPropertyEntity, classify, has_capability, is_setting
+from .entity import (
+    EufySdkPropertyEntity,
+    classify,
+    has_capability,
+    is_setting,
+    solix_devices_with,
+)
 from .light import LIGHT_OWNED_PROPS
 
 if TYPE_CHECKING:
@@ -56,11 +62,9 @@ async def async_setup_entry(
 
     # Anker Solix (separate account): a Solarbank's ambient light — a standalone switch
     # that reflects the device state (ambientLightOn, decoded from the ff09 telemetry).
-    solix = getattr(coordinator, "solix_devices", {}) or {}
     entities.extend(
         EufySolixLightSwitch(coordinator, sn)
-        for sn, dev in solix.items()
-        if "battery" in dev.get("capabilities", [])
+        for sn, _ in solix_devices_with(coordinator, "battery")
     )
 
     async_add_entities(entities)

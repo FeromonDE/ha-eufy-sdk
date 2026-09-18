@@ -21,6 +21,7 @@ from .entity import (
     classify,
     has_capability,
     remove_stale_solix_entities,
+    solix_devices_with,
 )
 from .light import LIGHT_HIDDEN_PROPS
 
@@ -328,9 +329,7 @@ async def async_setup_entry(
     # the AE1X0 Smart Meter's ff09 tag layout, so it applies ONLY to an energyMeter
     # device. A Solarbank / battery reports different tags: it gets raw channels below.
     solix = getattr(coordinator, "solix_devices", {}) or {}
-    energy_meters = [
-        sn for sn, dev in solix.items() if "energyMeter" in dev.get("capabilities", [])
-    ]
+    energy_meters = [sn for sn, _ in solix_devices_with(coordinator, "energyMeter")]
     entities.extend(
         EufySolixSensor(coordinator, sn, metric, meta)
         for sn in energy_meters
@@ -338,9 +337,7 @@ async def async_setup_entry(
     )
     # Solarbank / battery devices: named battery metrics (SOC, temp, power). The SDK
     # emits these under their own keys, so EufySolixSensor reads them directly.
-    batteries = [
-        sn for sn, dev in solix.items() if "battery" in dev.get("capabilities", [])
-    ]
+    batteries = [sn for sn, _ in solix_devices_with(coordinator, "battery")]
     for sn in batteries:
         remove_stale_solix_entities(
             hass, "sensor", f"solix_{sn}_dischargeLimit", f"solix_{sn}_chargeLimit"

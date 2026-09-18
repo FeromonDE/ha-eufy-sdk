@@ -11,7 +11,12 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceInfo
 
 from .const import DOMAIN
-from .entity import EufySdkPropertyEntity, classify, remove_stale_solix_entities
+from .entity import (
+    EufySdkPropertyEntity,
+    classify,
+    remove_stale_solix_entities,
+    solix_devices_with,
+)
 
 if TYPE_CHECKING:
     from homeassistant.core import Event, HomeAssistant
@@ -61,13 +66,11 @@ async def async_setup_entry(
     ]
     # Anker Solix: Solarbank display screen-off timeout. (The minimum-SOC / discharge
     # cutoff is now the Discharge Limit slider on the number platform.)
-    solix = getattr(coordinator, "solix_devices", {}) or {}
-    for sn, dev in solix.items():
-        if "battery" in dev.get("capabilities", []):
-            entities.append(EufySolixScreenOffSelect(coordinator, sn))
-            # Retire the old "Minimum Battery SOC" select (superseded by the Discharge
-            # Limit slider) so it doesn't linger as an unavailable entity after upgrade.
-            remove_stale_solix_entities(hass, "select", f"solix_{sn}_min_soc")
+    for sn, _ in solix_devices_with(coordinator, "battery"):
+        entities.append(EufySolixScreenOffSelect(coordinator, sn))
+        # Retire the old "Minimum Battery SOC" select (superseded by the Discharge
+        # Limit slider) so it doesn't linger as an unavailable entity after upgrade.
+        remove_stale_solix_entities(hass, "select", f"solix_{sn}_min_soc")
     async_add_entities(entities)
 
 

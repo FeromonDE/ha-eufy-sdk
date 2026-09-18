@@ -15,7 +15,7 @@ from .const import ATTRIBUTION, DOMAIN
 from .coordinator import EufySdkDataUpdateCoordinator
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
 
     from homeassistant.core import HomeAssistant
 
@@ -36,6 +36,24 @@ def remove_stale_solix_entities(
         entity_id = registry.async_get_entity_id(platform, DOMAIN, uid)
         if entity_id:
             registry.async_remove(entity_id)
+
+
+def solix_devices_with(
+    coordinator: EufySdkDataUpdateCoordinator, capability: str
+) -> Iterator[tuple[str, dict]]:
+    """
+    Yield `(sn, record)` for each Solix device advertising `capability`.
+
+    Solix is a separate account/backend, kept off the coordinator's main `data` under
+    `solix_devices` (absent unless the bridge has SOLIX_* configured). Every platform's
+    setup filters that map to the devices it builds entities for — a Solarbank by
+    `"battery"`, the meter by `"energyMeter"` — so this centralises the `getattr` guard
+    and the capability test they'd otherwise each repeat.
+    """
+    solix = getattr(coordinator, "solix_devices", {}) or {}
+    for sn, dev in solix.items():
+        if capability in dev.get("capabilities", []):
+            yield sn, dev
 
 
 # A device→cloud settings change (e.g. camera enable/disable) lags the P2P write
