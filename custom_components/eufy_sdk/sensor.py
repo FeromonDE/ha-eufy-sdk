@@ -197,13 +197,6 @@ SOLIX_BATTERY_METRICS: dict[str, dict[str, Any]] = {
         "icon": "mdi:battery-heart-variant",
         "precision": 0,
     },
-    "batteryCurrent": {
-        "name": "Battery Current",
-        "device_class": SensorDeviceClass.CURRENT,
-        "unit": "A",
-        "icon": "mdi:current-dc",
-        "precision": 1,
-    },
     "batteryPower": {
         "name": "Battery Power",
         "device_class": SensorDeviceClass.POWER,
