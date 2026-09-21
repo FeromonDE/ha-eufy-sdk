@@ -255,6 +255,45 @@ SOLIX_BATTERY_METRICS: dict[str, dict[str, Any]] = {
         "precision": 0,
         "enabled_default": False,
     },
+    # Solar / PV input. `photovoltaicPower` (ff09 0xab) is the TOTAL across the strings;
+    # `pv1Power`..`pv4Power` (0xc6..0xc9) are the per-string inputs, reading 0 while a
+    # string is unused/dark — itself useful (you see which strings produce). C6 is
+    # confirmed as a live solar input; all four are enabled by default.
+    "photovoltaicPower": {
+        "name": "Solar Power",
+        "device_class": SensorDeviceClass.POWER,
+        "unit": "W",
+        "icon": "mdi:solar-power",
+        "precision": 0,
+    },
+    "pv1Power": {
+        "name": "Solar Input 1",
+        "device_class": SensorDeviceClass.POWER,
+        "unit": "W",
+        "icon": "mdi:solar-panel",
+        "precision": 0,
+    },
+    "pv2Power": {
+        "name": "Solar Input 2",
+        "device_class": SensorDeviceClass.POWER,
+        "unit": "W",
+        "icon": "mdi:solar-panel",
+        "precision": 0,
+    },
+    "pv3Power": {
+        "name": "Solar Input 3",
+        "device_class": SensorDeviceClass.POWER,
+        "unit": "W",
+        "icon": "mdi:solar-panel",
+        "precision": 0,
+    },
+    "pv4Power": {
+        "name": "Solar Input 4",
+        "device_class": SensorDeviceClass.POWER,
+        "unit": "W",
+        "icon": "mdi:solar-panel",
+        "precision": 0,
+    },
     # NOTE: the SOC discharge/charge limits are NOT sensors here — they are the writable
     # sliders on the number platform (EufySolixSocLimitNumber). The old read-only
     # sensors are retired via remove_stale_solix_entities in async_setup_entry.
