@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from http import HTTPStatus
 from typing import TYPE_CHECKING
 
