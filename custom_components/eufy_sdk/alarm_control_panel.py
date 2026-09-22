@@ -11,6 +11,7 @@ from homeassistant.components.alarm_control_panel import (
 )
 
 from .alarm_logic import (
+    AlarmState,
     MODE_AWAY,
     MODE_CUSTOM_1,
     MODE_CUSTOM_2,
@@ -81,11 +82,11 @@ class EufySdkAlarmControlPanel(EufySdkDeviceEntity, AlarmControlPanelEntity):
                 options.get(CONF_NAME_FOR_CUSTOM3, DEFAULT_NAME_FOR_CUSTOM3),
             ),
         )
-        if state is None or isinstance(state, str) and not isinstance(
-            state, AlarmControlPanelState
-        ):
-            return state
-        return AlarmControlPanelState(state)
+        if state is None:
+            return None
+        if isinstance(state, AlarmState):
+            return AlarmControlPanelState(state)
+        return state
 
     async def _set_mode(self, raw: int) -> None:
         """Send a raw mode; the bridge event is the canonical state update."""
