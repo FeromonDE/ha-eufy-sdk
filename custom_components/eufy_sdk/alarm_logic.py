@@ -49,3 +49,18 @@ def alarm_state_for_raw(raw: Any) -> AlarmState | None:
     else:
         return None
     return RAW_TO_ALARM_STATE.get(value)
+
+
+def display_alarm_state_for_raw(
+    raw: Any,
+    custom_names: tuple[str, str, str],
+) -> AlarmState | str | None:
+    """Return the HA state, substituting user labels for Eufy custom modes 1/2/3."""
+    state = alarm_state_for_raw(raw)
+    if state == AlarmState.ARMED_CUSTOM_BYPASS:
+        return custom_names[0]
+    if state == AlarmState.ARMED_NIGHT:
+        return custom_names[1]
+    if state == AlarmState.ARMED_VACATION:
+        return custom_names[2]
+    return state

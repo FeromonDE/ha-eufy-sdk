@@ -11,13 +11,22 @@ from homeassistant.components.alarm_control_panel import (
 )
 
 from .alarm_logic import (
+    AlarmState,
     MODE_AWAY,
     MODE_CUSTOM_1,
     MODE_CUSTOM_2,
     MODE_CUSTOM_3,
     MODE_DISARMED,
     MODE_HOME,
-    alarm_state_for_raw,
+    display_alarm_state_for_raw,
+)
+from .const import (
+    CONF_NAME_FOR_CUSTOM1,
+    CONF_NAME_FOR_CUSTOM2,
+    CONF_NAME_FOR_CUSTOM3,
+    DEFAULT_NAME_FOR_CUSTOM1,
+    DEFAULT_NAME_FOR_CUSTOM2,
+    DEFAULT_NAME_FOR_CUSTOM3,
 )
 from .entity import EufySdkDeviceEntity, has_capability
 
@@ -62,10 +71,22 @@ class EufySdkAlarmControlPanel(EufySdkDeviceEntity, AlarmControlPanelEntity):
         self._attr_name = "Security mode"
 
     @property
-    def alarm_state(self) -> AlarmControlPanelState | None:
-        """Return the explicit Eufy-to-HA state mapping."""
-        state = alarm_state_for_raw(self.device.get("state", {}).get("armingMode"))
-        return AlarmControlPanelState(state) if state is not None else None
+    def alarm_state(self) -> AlarmControlPanelState | str | None:
+        """Return the Eufy mode, using configured labels for custom modes 1/2/3."""
+        options = self.coordinator.config_entry.options
+        state = display_alarm_state_for_raw(
+            self.device.get("state", {}).get("armingMode"),
+            (
+                options.get(CONF_NAME_FOR_CUSTOM1, DEFAULT_NAME_FOR_CUSTOM1),
+                options.get(CONF_NAME_FOR_CUSTOM2, DEFAULT_NAME_FOR_CUSTOM2),
+                options.get(CONF_NAME_FOR_CUSTOM3, DEFAULT_NAME_FOR_CUSTOM3),
+            ),
+        )
+        if state is None:
+            return None
+        if isinstance(state, AlarmState):
+            return AlarmControlPanelState(state)
+        return state
 
     async def _set_mode(self, raw: int) -> None:
         """Send a raw mode; the bridge event is the canonical state update."""

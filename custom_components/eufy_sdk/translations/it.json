@@ -126,7 +126,10 @@
         "title": "Opzioni del bridge eufy",
         "description": "Ogni quanto il bridge interroga il cloud eufy per conoscere lo stato dei dispositivi. Un intervallo breve dà dati più aggiornati ma aumenta il traffico verso il cloud, che comunque si aggiorna solo ogni pochi minuti.",
         "data": {
-          "poll_interval_minutes": "Intervallo di interrogazione del cloud (minuti)"
+          "poll_interval_minutes": "Intervallo di interrogazione del cloud (minuti)",
+          "name_for_custom1": "Nome personalizzato per la modalità Custom 1",
+          "name_for_custom2": "Nome personalizzato per la modalità Custom 2",
+          "name_for_custom3": "Nome personalizzato per la modalità Custom 3"
         }
       }
     }
