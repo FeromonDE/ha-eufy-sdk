@@ -70,7 +70,9 @@ class EufySdkCamera(CoordinatorEntity["EufySdkDataUpdateCoordinator"], Camera):
     _attr_has_entity_name = True
     _attr_name = None  # the device name is the camera name
     _attr_attribution = ATTRIBUTION
-    _attr_supported_features = CameraEntityFeature.STREAM | CameraEntityFeature.ON_OFF
+    _attr_supported_features = (
+        CameraEntityFeature.STREAM | CameraEntityFeature.ON_OFF
+    )
 
     def __init__(
         self,
@@ -106,7 +108,7 @@ class EufySdkCamera(CoordinatorEntity["EufySdkDataUpdateCoordinator"], Camera):
 
     @property
     def is_on(self) -> bool:
-        """Match the legacy integration: the camera is on while a live stream is requested."""
+        """Return whether this camera entity has an explicitly requested live stream."""
         return self._stream_provider is not None
 
     @property
@@ -157,7 +159,7 @@ class EufySdkCamera(CoordinatorEntity["EufySdkDataUpdateCoordinator"], Camera):
             # Opening this RTSP consumer is the operation that makes bridge/go2rtc
             # open the SDK's real P2P LiveStream.
             await self._start_hass_streaming()
-        except Exception:
+        except Exception:  # noqa: BLE001 - rollback then preserve the original failure
             self._stream_provider = None
             with contextlib.suppress(Exception):
                 await client.stop_stream(self._sn)
@@ -219,7 +221,8 @@ class EufySdkCamera(CoordinatorEntity["EufySdkDataUpdateCoordinator"], Camera):
 
     async def async_turn_on(self) -> None:
         """Use RTSP when already enabled on-device, otherwise fall back to P2P."""
-        if self._rtsp_supported and self.device.get("state", {}).get("rtspStream") is True:
+        rtsp_enabled = self.device.get("state", {}).get("rtspStream") is True
+        if self._rtsp_supported and rtsp_enabled:
             await self.async_start_rtsp_livestream()
         else:
             await self.async_start_p2p_livestream()
