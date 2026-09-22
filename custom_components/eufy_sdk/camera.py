@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 from http import HTTPStatus
 from typing import TYPE_CHECKING
 
 from homeassistant.components.camera import Camera, CameraEntityFeature
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import entity_platform
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -43,6 +46,22 @@ async def async_setup_entry(
         if dev.get("stream")
     )
 
+    # Match the legacy fuatakgun/eufy_security camera API: explicit entity services
+    # for P2P and native-device RTSP live streams.
+    platform = entity_platform.async_get_current_platform()
+    platform.async_register_entity_service(
+        "start_p2p_livestream", {}, "async_start_p2p_livestream"
+    )
+    platform.async_register_entity_service(
+        "stop_p2p_livestream", {}, "async_stop_p2p_livestream"
+    )
+    platform.async_register_entity_service(
+        "start_rtsp_livestream", {}, "async_start_rtsp_livestream"
+    )
+    platform.async_register_entity_service(
+        "stop_rtsp_livestream", {}, "async_stop_rtsp_livestream"
+    )
+
 
 class EufySdkCamera(CoordinatorEntity["EufySdkDataUpdateCoordinator"], Camera):
     """A camera via the bridge: live via go2rtc RTSP, stills via snapshot."""
@@ -50,7 +69,7 @@ class EufySdkCamera(CoordinatorEntity["EufySdkDataUpdateCoordinator"], Camera):
     _attr_has_entity_name = True
     _attr_name = None  # the device name is the camera name
     _attr_attribution = ATTRIBUTION
-    _attr_supported_features = CameraEntityFeature.STREAM
+    _attr_supported_features = CameraEntityFeature.STREAM | CameraEntityFeature.ON_OFF
 
     def __init__(
         self,
@@ -67,6 +86,8 @@ class EufySdkCamera(CoordinatorEntity["EufySdkDataUpdateCoordinator"], Camera):
         self._host = host
         self._port = port
         self._rtsp_port = rtsp_port
+        self._stream_provider: str | None = None
+        self._native_rtsp_url: str | None = None
         self._attr_unique_id = f"{sn}_camera"
         dev = coordinator.data.get(sn, {})
         self._attr_device_info = DeviceInfo(
