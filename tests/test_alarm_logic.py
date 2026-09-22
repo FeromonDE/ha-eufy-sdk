@@ -25,7 +25,6 @@ class AlarmLogicTests(unittest.TestCase):
             ],
         )
 
-
     def test_custom_modes_use_configured_display_names(self):
         self.assertEqual(
             [
