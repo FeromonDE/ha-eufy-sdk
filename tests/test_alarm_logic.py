@@ -25,6 +25,23 @@ class AlarmLogicTests(unittest.TestCase):
             ],
         )
 
+
+    def test_custom_modes_use_configured_display_names(self):
+        self.assertEqual(
+            [
+                _MODULE.display_alarm_state_for_raw(raw, ("Sleep", "Night", "Vacation"))
+                for raw in (0, 1, 3, 4, 5, 63)
+            ],
+            [
+                _MODULE.AlarmState.ARMED_AWAY,
+                _MODULE.AlarmState.ARMED_HOME,
+                "Sleep",
+                "Night",
+                "Vacation",
+                _MODULE.AlarmState.DISARMED,
+            ],
+        )
+
     def test_unmapped_modes_remain_unknown(self):
         for raw in (2, 6, 47, None, True, 3.9, "custom2"):
             self.assertIsNone(_MODULE.alarm_state_for_raw(raw))
