@@ -104,9 +104,132 @@ class EufySdkCamera(CoordinatorEntity["EufySdkDataUpdateCoordinator"], Camera):
         """Available while the bridge still reports this camera."""
         return super().available and self._sn in self.coordinator.data
 
-    async def stream_source(self) -> str:
-        """Return the go2rtc RTSP URL — HA's stream component + go2rtc do the work."""
-        return f"rtsp://{self._host}:{self._rtsp_port}/{self._sn}"
+    @property
+    def is_on(self) -> bool:
+        """Match the legacy integration: the camera is on while a live stream is requested."""
+        return self._stream_provider is not None
+
+    @property
+    def is_streaming(self) -> bool:
+        """Return whether this entity currently owns a live stream."""
+        if self._stream_provider == "rtsp":
+            return bool(self.device.get("state", {}).get("rtspStream"))
+        if self._stream_provider == "p2p":
+            return bool(self.device.get("streaming")) or self.stream is not None
+        return False
+
+    async def stream_source(self) -> str | None:
+        """Return the active provider URL; None until an explicit start/turn-on."""
+        if self._stream_provider == "rtsp":
+            return self._native_rtsp_url or self.device.get("state", {}).get("rtspUrl")
+        if self._stream_provider == "p2p":
+            return f"rtsp://{self._host}:{self._rtsp_port}/{self._sn}"
+        return None
+
+    @property
+    def _rtsp_supported(self) -> bool:
+        """Whether the SDK property manifest exposes native RTSP publication."""
+        specs = self.coordinator.config_entry.runtime_data.properties.get(self._sn, [])
+        return any(spec.get("name") == "rtspStream" for spec in specs)
+
+    async def _start_hass_streaming(self) -> None:
+        """Create/start HA's stream consumer, matching fuatakgun's camera lifecycle."""
+        await self._stop_hass_streaming()
+        stream = await self.async_create_stream()
+        if stream is None:
+            raise HomeAssistantError("Camera stream source is unavailable")
+        await stream.start()
+
+    async def _stop_hass_streaming(self) -> None:
+        """Stop HA's stream consumer so go2rtc releases the upstream feed."""
+        if self.stream is not None:
+            await self.stream.stop()
+            self.stream = None
+
+    async def async_start_p2p_livestream(self) -> None:
+        """Start the P2P live stream through bridge go2rtc, like legacy Start P2P."""
+        client = self.coordinator.config_entry.runtime_data.client
+        await self._stop_hass_streaming()
+        self._native_rtsp_url = None
+        self._stream_provider = "p2p"
+        try:
+            await client.start_stream(self._sn)
+            # Opening this RTSP consumer is the operation that makes bridge/go2rtc
+            # open the SDK's real P2P LiveStream.
+            await self._start_hass_streaming()
+        except Exception:
+            self._stream_provider = None
+            with contextlib.suppress(Exception):
+                await client.stop_stream(self._sn)
+            raise
+        finally:
+            self.async_write_ha_state()
+
+    async def async_stop_p2p_livestream(self) -> None:
+        """Stop the P2P stream by releasing HA's media consumer."""
+        client = self.coordinator.config_entry.runtime_data.client
+        await self._stop_hass_streaming()
+        self._stream_provider = None
+        self._native_rtsp_url = None
+        # The media disconnect above is the real stop; keep the bridge command too
+        # because it is the protocol counterpart and mirrors the legacy service.
+        await client.stop_stream(self._sn)
+        self.async_write_ha_state()
+
+    async def _wait_for_rtsp_url(self) -> str:
+        """Wait for the authoritative RTSP URL pushed by the device after publish."""
+        client = self.coordinator.config_entry.runtime_data.client
+        async with asyncio.timeout(15):
+            while True:
+                dev = await client.get_device(self._sn)
+                state = dev.get("state", {})
+                url = state.get("rtspUrl")
+                if isinstance(url, str) and url.startswith("rtsp://"):
+                    return url
+                await asyncio.sleep(0.5)
+
+    async def async_start_rtsp_livestream(self) -> None:
+        """Start the camera's native RTSP publication and consume it in HA."""
+        if not self._rtsp_supported:
+            raise HomeAssistantError("Camera does not support native RTSP")
+        client = self.coordinator.config_entry.runtime_data.client
+        await self._stop_hass_streaming()
+        await client.set_property(self._sn, "rtspStream", True)
+        try:
+            self._native_rtsp_url = await self._wait_for_rtsp_url()
+            self._stream_provider = "rtsp"
+            await self._start_hass_streaming()
+        except Exception:
+            self._stream_provider = None
+            self._native_rtsp_url = None
+            with contextlib.suppress(Exception):
+                await client.set_property(self._sn, "rtspStream", False)
+            raise
+        finally:
+            self.async_write_ha_state()
+
+    async def async_stop_rtsp_livestream(self) -> None:
+        """Stop HA consumption and disable the camera's native RTSP publication."""
+        client = self.coordinator.config_entry.runtime_data.client
+        await self._stop_hass_streaming()
+        await client.set_property(self._sn, "rtspStream", False)
+        self._stream_provider = None
+        self._native_rtsp_url = None
+        self.async_write_ha_state()
+
+    async def async_turn_on(self) -> None:
+        """Use RTSP when already enabled on-device, otherwise fall back to P2P."""
+        if self._rtsp_supported and self.device.get("state", {}).get("rtspStream") is True:
+            await self.async_start_rtsp_livestream()
+        else:
+            await self.async_start_p2p_livestream()
+
+    async def async_turn_off(self) -> None:
+        """Stop the currently selected stream provider."""
+        if self._stream_provider == "rtsp":
+            await self.async_stop_rtsp_livestream()
+        else:
+            await self.async_stop_p2p_livestream()
 
     async def async_camera_image(
         self,
