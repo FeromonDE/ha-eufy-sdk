@@ -202,6 +202,23 @@ class EufySdkApiClient:
         """Force a 'Last event' image refresh; returns True if a newer image landed."""
         return bool((await self.rpc("event.refresh", sn=sn)).get("changed"))
 
+    async def get_device(self, sn: str) -> dict[str, Any]:
+        """Return the bridge's current summary for one device."""
+        return (await self.rpc("device.state", sn=sn))["device"]
+
+    async def start_stream(self, sn: str) -> dict[str, Any]:
+        """Ask the bridge for this camera's stream endpoints.
+
+        The bridge deliberately starts the real P2P feed only when a media consumer
+        connects to one of these endpoints; the HA camera entity does that immediately
+        after this call, mirroring the legacy eufy_security start-livestream workflow.
+        """
+        return await self.rpc("stream.start", sn=sn)
+
+    async def stop_stream(self, sn: str) -> None:
+        """Send the bridge stream-stop advisory after the HA media consumer closes."""
+        await self.rpc("stream.stop", sn=sn)
+
     async def list_solix_devices(self) -> list[dict[str, Any]]:
         """Return the Anker Solix devices (empty if Solix isn't configured)."""
         # Each: {sn, productCode, name, category, capabilities, values, firmware}.
