@@ -30,6 +30,16 @@ DEFAULT_POLL_INTERVAL_MIN = 10
 CONF_SOC_REFRESH = "soc_refresh_seconds"
 DEFAULT_SOC_REFRESH_SEC = 60
 
+# Options: display names for Eufy's three custom guard modes.
+# These intentionally mirror the legacy fuatakgun/eufy_security integration:
+# modes 3/4/5 may expose user-defined state strings in the alarm panel.
+CONF_NAME_FOR_CUSTOM1 = "name_for_custom1"
+CONF_NAME_FOR_CUSTOM2 = "name_for_custom2"
+CONF_NAME_FOR_CUSTOM3 = "name_for_custom3"
+DEFAULT_NAME_FOR_CUSTOM1 = "Custom 1"
+DEFAULT_NAME_FOR_CUSTOM2 = "Custom 2"
+DEFAULT_NAME_FOR_CUSTOM3 = "Custom 3"
+
 # Schema version this integration targets (the bridge sends its own in `hello`/`ready`).
 SUPPORTED_SCHEMA = 1
 
