@@ -201,7 +201,7 @@ class EufySdkCamera(CoordinatorEntity["EufySdkDataUpdateCoordinator"], Camera):
             self._native_rtsp_url = await self._wait_for_rtsp_url()
             self._stream_provider = "rtsp"
             await self._start_hass_streaming()
-        except Exception:
+        except Exception:  # noqa: BLE001 - rollback then preserve the original failure
             self._stream_provider = None
             self._native_rtsp_url = None
             with contextlib.suppress(Exception):
