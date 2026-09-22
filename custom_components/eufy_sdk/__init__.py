@@ -14,6 +14,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.loader import async_get_loaded_integration
 
 from .api import EufySdkApiClient
+from .arming_sync import apply_arming_mode_event
 from .const import (
     CONF_HOST,
     CONF_POLL_INTERVAL,
@@ -41,6 +42,9 @@ PLATFORMS: list[Platform] = [
     Platform.IMAGE,
     Platform.EVENT,
     Platform.LIGHT,
+    Platform.LOCK,
+    Platform.ALARM_CONTROL_PANEL,
+    Platform.SIREN,
 ]
 
 
@@ -67,7 +71,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufySdkConfigEntry) -> b
 
     def _on_event(evt: dict) -> None:
         hass.bus.async_fire(f"{DOMAIN}_event", evt)
-        if evt.get("event") == "ready":
+        event = evt.get("event")
+        if event == "contactState":
+            sn = evt.get("deviceSn") or evt.get("sn")
+            if sn and sn in coordinator.data and "open" in evt:
+                coordinator.data[sn].setdefault("state", {})["contact"] = bool(
+                    evt.get("open")
+                )
+                coordinator.async_update_listeners()
+        elif event == "armingModeChanged":
+            serial = evt.get("deviceSn") or evt.get("sn")
+            if "mode" in evt:
+                apply_arming_mode_event(coordinator, evt)
+            elif serial and serial in coordinator.data:
+                entry.async_create_background_task(
+                    hass,
+                    coordinator.async_request_refresh(),
+                    "arming mode refresh",
+                )
+        elif event == "ready":
             _refresh_now()
 
     client = EufySdkApiClient(
@@ -91,9 +113,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufySdkConfigEntry) -> b
     except Exception as err:  # noqa: BLE001 - a failed config push shouldn't block setup
         LOGGER.warning("could not set bridge poll interval: %s", err)
 
-    # Reload when the options change, so a new poll interval is applied.
-    entry.async_on_unload(entry.add_update_listener(_async_reload_on_update))
-
     # Property manifests are static per device — fetch once so the platforms can
     # build switch/select/number/sensor entities. A device that fails is skipped.
     properties: dict[str, list] = {}
@@ -116,10 +135,3 @@ async def async_unload_entry(hass: HomeAssistant, entry: EufySdkConfigEntry) -> 
     if unloaded:
         await entry.runtime_data.client.close()
     return unloaded
-
-
-async def _async_reload_on_update(
-    hass: HomeAssistant, entry: EufySdkConfigEntry
-) -> None:
-    """Reload the entry when its options change (e.g. a new poll interval)."""
-    await hass.config_entries.async_reload(entry.entry_id)
