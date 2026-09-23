@@ -24,6 +24,10 @@ MODE_CUSTOM_2 = 4
 MODE_CUSTOM_3 = 5
 MODE_DISARMED = 63
 
+# The upstream SDK currently accepts writes only for the three wire-captured modes.
+# Custom/schedule/off/geofence remain readable but must not be offered as writable controls.
+SETTABLE_ARMING_MODES = frozenset({MODE_AWAY, MODE_HOME, MODE_DISARMED})
+
 # Custom 1/2/3 retain the established old-integration compatibility mapping.
 RAW_TO_ALARM_STATE = {
     MODE_AWAY: AlarmState.ARMED_AWAY,
