@@ -1,6 +1,6 @@
 {
   "domain": "eufy_sdk",
-  "name": "eufy-sdk",
+  "name": "Eufy Security",
   "codeowners": [
     "@mega-yfue"
   ],
@@ -8,5 +8,5 @@
   "documentation": "https://github.com/mega-yfue/ha-eufy-sdk",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/mega-yfue/ha-eufy-sdk/issues",
-  "version": "0.2.3"
+  "version": "0.2.4"
 }
