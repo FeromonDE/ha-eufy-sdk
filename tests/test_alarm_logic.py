@@ -41,6 +41,9 @@ class AlarmLogicTests(unittest.TestCase):
             ],
         )
 
+    def test_settable_modes_match_upstream_sdk_write_domain(self):
+        self.assertEqual(_MODULE.SETTABLE_ARMING_MODES, frozenset({0, 1, 63}))
+
     def test_unmapped_modes_remain_unknown(self):
         for raw in (2, 6, 47, None, True, 3.9, "custom2"):
             self.assertIsNone(_MODULE.alarm_state_for_raw(raw))
