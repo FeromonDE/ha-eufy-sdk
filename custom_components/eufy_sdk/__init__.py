@@ -21,6 +21,7 @@ from .const import (
     CONF_PORT,
     DEFAULT_POLL_INTERVAL_MIN,
     DOMAIN,
+    EVENT_TYPE,
     LOGGER,
 )
 from .coordinator import EufySdkDataUpdateCoordinator
@@ -70,28 +71,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufySdkConfigEntry) -> b
         hass.async_create_task(coordinator.async_request_refresh())
 
     async def _refresh_arming_mode(serial: str) -> None:
-        """Read only this HomeBase after the SDK reports an arming transition."""
+        """Read only this HomeBase after a valueless arming transition."""
         try:
             device = await client.get_device(serial)
             mode = device.get("state", {}).get("armingMode")
             if mode is not None:
                 apply_arming_mode_event(
                     coordinator,
-                    {
-                        "event": "armingModeChanged",
-                        "deviceSn": serial,
-                        "mode": mode,
-                    },
+                    {"event": "armingModeChanged", "deviceSn": serial, "mode": mode},
                 )
                 return
         except EufySdkApiClientError as err:
             LOGGER.debug("targeted arming refresh failed for %s: %s", serial, err)
-
-        # Fallback keeps the previous behaviour if a bridge/device cannot answer.
         await coordinator.async_request_refresh()
 
     def _on_event(evt: dict) -> None:
-        hass.bus.async_fire(f"{DOMAIN}_event", evt)
+        hass.bus.async_fire(EVENT_TYPE, evt)
         event = evt.get("event")
         if event == "contactState":
             sn = evt.get("deviceSn") or evt.get("sn")
