@@ -12,9 +12,6 @@ from homeassistant.components.alarm_control_panel import (
 
 from .alarm_logic import (
     MODE_AWAY,
-    MODE_CUSTOM_1,
-    MODE_CUSTOM_2,
-    MODE_CUSTOM_3,
     MODE_DISARMED,
     MODE_HOME,
     AlarmState,
@@ -59,9 +56,6 @@ class EufySdkAlarmControlPanel(EufySdkDeviceEntity, AlarmControlPanelEntity):
     _attr_supported_features = (
         AlarmControlPanelEntityFeature.ARM_HOME
         | AlarmControlPanelEntityFeature.ARM_AWAY
-        | AlarmControlPanelEntityFeature.ARM_CUSTOM_BYPASS
-        | AlarmControlPanelEntityFeature.ARM_NIGHT
-        | AlarmControlPanelEntityFeature.ARM_VACATION
     )
 
     def __init__(self, coordinator: EufySdkDataUpdateCoordinator, serial: str) -> None:
@@ -113,24 +107,3 @@ class EufySdkAlarmControlPanel(EufySdkDeviceEntity, AlarmControlPanelEntity):
     ) -> None:
         """Disarm; this SDK path has no PIN/code parameter."""
         await self._set_mode(MODE_DISARMED)
-
-    async def async_alarm_arm_custom_bypass(
-        self,
-        code: str | None = None,  # noqa: ARG002
-    ) -> None:
-        """Arm custom 1; this SDK path has no PIN/code parameter."""
-        await self._set_mode(MODE_CUSTOM_1)
-
-    async def async_alarm_arm_night(
-        self,
-        code: str | None = None,  # noqa: ARG002
-    ) -> None:
-        """Arm custom 2; this SDK path has no PIN/code parameter."""
-        await self._set_mode(MODE_CUSTOM_2)
-
-    async def async_alarm_arm_vacation(
-        self,
-        code: str | None = None,  # noqa: ARG002
-    ) -> None:
-        """Arm custom 3; this SDK path has no PIN/code parameter."""
-        await self._set_mode(MODE_CUSTOM_3)
