@@ -13,7 +13,7 @@ from homeassistant.const import Platform
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.loader import async_get_loaded_integration
 
-from .api import EufySdkApiClient
+from .api import EufySdkApiClient, EufySdkApiClientError
 from .arming_sync import apply_arming_mode_event
 from .const import (
     CONF_HOST,
@@ -69,6 +69,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufySdkConfigEntry) -> b
     def _refresh_now() -> None:
         hass.async_create_task(coordinator.async_request_refresh())
 
+    async def _refresh_arming_mode(serial: str) -> None:
+        """Read only this HomeBase after the SDK reports an arming transition."""
+        try:
+            device = await client.get_device(serial)
+            mode = device.get("state", {}).get("armingMode")
+            if mode is not None:
+                apply_arming_mode_event(
+                    coordinator,
+                    {
+                        "event": "armingModeChanged",
+                        "deviceSn": serial,
+                        "mode": mode,
+                    },
+                )
+                return
+        except EufySdkApiClientError as err:
+            LOGGER.debug("targeted arming refresh failed for %s: %s", serial, err)
+
+        # Fallback keeps the previous behaviour if a bridge/device cannot answer.
+        await coordinator.async_request_refresh()
+
     def _on_event(evt: dict) -> None:
         hass.bus.async_fire(f"{DOMAIN}_event", evt)
         event = evt.get("event")
@@ -86,7 +107,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufySdkConfigEntry) -> b
             elif serial and serial in coordinator.data:
                 entry.async_create_background_task(
                     hass,
-                    coordinator.async_request_refresh(),
+                    _refresh_arming_mode(serial),
                     "arming mode refresh",
                 )
         elif event == "ready":
