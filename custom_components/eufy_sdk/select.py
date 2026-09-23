@@ -9,6 +9,7 @@ from homeassistant.components.select import SelectEntity
 from homeassistant.const import EntityCategory
 from homeassistant.core import callback
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.restore_state import RestoreEntity
 
@@ -63,11 +64,22 @@ async def async_setup_entry(
 ) -> None:
     """Create a select per writable enum property, plus Solix and preset selects."""
     coordinator = entry.runtime_data.coordinator
+
+    # armingMode is represented by the alarm-control-panel platform. The SDK can
+    # READ all guard modes but currently WRITES only away/home/disarmed, while the
+    # generic enum manifest carries the wider read domain. Do not expose a duplicate
+    # select that would offer values the bridge rejects.
+    registry = er.async_get(hass)
+    for sn in coordinator.data:
+        stale = registry.async_get_entity_id("select", DOMAIN, f"{sn}_armingMode")
+        if stale:
+            registry.async_remove(stale)
+
     entities: list[SelectEntity] = [
         EufySdkSelect(coordinator, sn, spec)
         for sn in coordinator.data
         for spec in entry.runtime_data.properties.get(sn, [])
-        if classify(spec) == "select"
+        if classify(spec) == "select" and spec.get("name") != "armingMode"
     ]
     # Anker Solix: Solarbank display screen-off timeout. (The minimum-SOC / discharge
     # cutoff is now the Discharge Limit slider on the number platform.)
