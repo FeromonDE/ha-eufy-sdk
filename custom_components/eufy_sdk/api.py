@@ -198,6 +198,10 @@ class EufySdkApiClient:
         """Every device the bridge exposes (sn/name/model/codec/capabilities/state)."""
         return (await self.rpc("devices.list"))["devices"]
 
+    async def get_device(self, sn: str) -> dict[str, Any]:
+        """Return one device's current bridge-side state."""
+        return (await self.rpc("device.state", sn=sn))["device"]
+
     async def refresh_event_image(self, sn: str) -> bool:
         """Force a 'Last event' image refresh; returns True if a newer image landed."""
         return bool((await self.rpc("event.refresh", sn=sn)).get("changed"))
