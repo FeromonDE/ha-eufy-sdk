@@ -90,6 +90,8 @@ class EufySdkAlarmControlPanel(EufySdkDeviceEntity, AlarmControlPanelEntity):
 
     async def _set_mode(self, raw: int) -> None:
         """Send a raw mode; the bridge event is the canonical state update."""
+        # Deliberately no optimistic coordinator write here: the UI changes only after
+        # the bridge confirms the HomeBase's actual mode via armingModeChanged.
         client = self.coordinator.config_entry.runtime_data.client
         await client.set_property(self._sn, "armingMode", raw)
 

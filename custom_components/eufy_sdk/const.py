@@ -5,6 +5,13 @@ from logging import Logger, getLogger
 LOGGER: Logger = getLogger(__package__)
 
 DOMAIN = "eufy_sdk"
+
+# Every bridge event is re-fired on the HA bus under this type (automations, device
+# triggers and the entities that react to pushes all listen on it).
+EVENT_TYPE = f"{DOMAIN}_event"
+# The bridge event carrying an Anker Solix telemetry reading (`deviceSn` + `values`).
+SOLIX_READING_EVENT = "solixReading"
+
 ATTRIBUTION = "Data provided by the eufy cloud via ha-eufy-sdk-bridge"
 
 # Config-entry keys: the address of the ha-eufy-sdk-bridge WebSocket.
@@ -12,9 +19,7 @@ CONF_HOST = "host"
 CONF_PORT = "port"
 DEFAULT_PORT = 3000
 
-# Config-entry key: the host-side port Home Assistant should use for go2rtc RTSP.
-# The host is the same address used for the bridge; Supervisor/Docker may publish
-# go2rtc's internal 8554 listener on a different host port.
+# Host-side go2rtc RTSP port used by Home Assistant camera stream URLs.
 CONF_GO2RTC_RTSP_PORT = "go2rtc_rtsp_port"
 DEFAULT_GO2RTC_RTSP_PORT = 8554
 
@@ -30,9 +35,7 @@ DEFAULT_POLL_INTERVAL_MIN = 10
 CONF_SOC_REFRESH = "soc_refresh_seconds"
 DEFAULT_SOC_REFRESH_SEC = 60
 
-# Options: display names for Eufy's three custom guard modes.
-# These intentionally mirror the legacy fuatakgun/eufy_security integration:
-# modes 3/4/5 may expose user-defined state strings in the alarm panel.
+# User-facing names for Eufy's three custom guard modes.
 CONF_NAME_FOR_CUSTOM1 = "name_for_custom1"
 CONF_NAME_FOR_CUSTOM2 = "name_for_custom2"
 CONF_NAME_FOR_CUSTOM3 = "name_for_custom3"

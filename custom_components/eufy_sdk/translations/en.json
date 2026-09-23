@@ -89,19 +89,6 @@
           "go2rtc_rtsp_port": "RTSP port"
         }
       },
-      "hassio_confirm": {
-        "title": "Set up discovered eufy bridge",
-        "description": "Home Assistant discovered the eufy-sdk bridge add-on at {host}. Camera streams will use RTSP at {rtsp}."
-      },
-      "reconfigure": {
-        "title": "Reconfigure the eufy bridge",
-        "description": "Update the bridge host/port or the published go2rtc RTSP port.",
-        "data": {
-          "host": "Host",
-          "port": "Port",
-          "go2rtc_rtsp_port": "RTSP port"
-        }
-      },
       "twofa": {
         "title": "Two-factor authentication",
         "description": "A verification code was sent to your eufy account. Enter it below (tick Resend to request a new one).",
@@ -121,6 +108,19 @@
       "reauth_confirm": {
         "title": "Re-authenticate the eufy bridge",
         "description": "The bridge at {host} needs to log in again (its session expired, so eufy is asking for 2FA/captcha). Make sure the bridge is running and reachable, then submit to continue."
+      },
+      "hassio_confirm": {
+        "title": "Set up discovered eufy bridge",
+        "description": "Home Assistant discovered the eufy-sdk bridge add-on at {host}. Camera streams will use RTSP at {rtsp}."
+      },
+      "reconfigure": {
+        "title": "Reconfigure the eufy bridge",
+        "description": "Update the bridge host/port or the published go2rtc RTSP port.",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "go2rtc_rtsp_port": "RTSP port"
+        }
       }
     },
     "error": {
@@ -131,8 +131,8 @@
     "abort": {
       "already_configured": "This bridge is already configured.",
       "cannot_connect": "Could not reach the bridge.",
-      "invalid_discovery_info": "The eufy bridge add-on sent incomplete discovery information.",
-      "reauth_successful": "The bridge is authenticated again."
+      "reauth_successful": "The bridge is authenticated again.",
+      "invalid_discovery_info": "The eufy bridge add-on sent incomplete discovery information."
     }
   },
   "options": {
