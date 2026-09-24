@@ -61,7 +61,7 @@ MOTION_EVENTS: frozenset[str] = frozenset(
 
 # A doorbell press is its own event entity (device_class DOORBELL).
 DOORBELL_EVENT = "doorbellPress"
-DOORBELL_EVENT_TYPE = "pressed"
+DOORBELL_EVENT_TYPE = "ring"
 
 # Capabilities that make a device eligible for a Detection event entity.
 DETECTION_CAPABILITIES = frozenset({"motion", "person_detection", "doorbell"})
