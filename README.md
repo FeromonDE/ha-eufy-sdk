@@ -1,9 +1,9 @@
 # ha-eufy-sdk
 
 [![HACS](https://img.shields.io/badge/HACS-Custom-41BDF5?logo=home-assistant&logoColor=white)](https://hacs.xyz)
-[![Validate](https://github.com/mega-yfue/ha-eufy-sdk/actions/workflows/validate.yml/badge.svg)](https://github.com/mega-yfue/ha-eufy-sdk/actions/workflows/validate.yml)
-[![Lint](https://github.com/mega-yfue/ha-eufy-sdk/actions/workflows/lint.yml/badge.svg)](https://github.com/mega-yfue/ha-eufy-sdk/actions/workflows/lint.yml)
-[![release](https://img.shields.io/github/v/release/mega-yfue/ha-eufy-sdk?sort=semver)](https://github.com/mega-yfue/ha-eufy-sdk/releases)
+[![Validate](https://github.com/FeromonDE/ha-eufy-sdk/actions/workflows/validate.yml/badge.svg)](https://github.com/FeromonDE/ha-eufy-sdk/actions/workflows/validate.yml)
+[![Lint](https://github.com/FeromonDE/ha-eufy-sdk/actions/workflows/lint.yml/badge.svg)](https://github.com/FeromonDE/ha-eufy-sdk/actions/workflows/lint.yml)
+[![release](https://img.shields.io/github/v/release/FeromonDE/ha-eufy-sdk?sort=semver)](https://github.com/FeromonDE/ha-eufy-sdk/releases)
 [![license](https://img.shields.io/github/license/mega-yfue/ha-eufy-sdk)](./LICENSE)
 
 The Home Assistant integration for eufy — installed via **HACS**. This is the front door: it talks to
@@ -26,7 +26,7 @@ eufy account (the bridge is where the eufy login, device list, and video actuall
 
 **1. Add the repository to HACS** — one click:
 
-[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=mega-yfue&repository=ha-eufy-sdk&category=integration)
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=FeromonDE&repository=ha-eufy-sdk&category=integration)
 
 Or manually: HACS → **Custom repositories** → add this repo as an *Integration* → **Install**.
 Restart Home Assistant when HACS asks.
