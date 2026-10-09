@@ -12,13 +12,23 @@ from homeassistant.components.alarm_control_panel import (
 from homeassistant.util import dt as dt_util
 
 from .alarm_logic import (
+    AlarmState,
     MODE_AWAY,
     MODE_CUSTOM_1,
     MODE_CUSTOM_2,
     MODE_CUSTOM_3,
     MODE_DISARMED,
     MODE_HOME,
+    display_alarm_state,
     panel_state_for,
+)
+from .const import (
+    CONF_NAME_FOR_CUSTOM1,
+    CONF_NAME_FOR_CUSTOM2,
+    CONF_NAME_FOR_CUSTOM3,
+    DEFAULT_NAME_FOR_CUSTOM1,
+    DEFAULT_NAME_FOR_CUSTOM2,
+    DEFAULT_NAME_FOR_CUSTOM3,
 )
 from .entity import EufySdkDeviceEntity, ScheduleBoundaryMixin, has_capability
 from .schedule_logic import current_mode_attributes, current_mode_for
@@ -84,7 +94,20 @@ class EufySdkAlarmControlPanel(
         alarms = self.coordinator.config_entry.runtime_data.station_alarms
         mode, _source = current_mode_for(self.device.get("state", {}), dt_util.now())
         state = panel_state_for({"armingMode": mode}, alarms.get(self._sn))
-        return AlarmControlPanelState(state) if state is not None else None
+        options = self.coordinator.config_entry.options
+        displayed = display_alarm_state(
+            state,
+            (
+                options.get(CONF_NAME_FOR_CUSTOM1, DEFAULT_NAME_FOR_CUSTOM1),
+                options.get(CONF_NAME_FOR_CUSTOM2, DEFAULT_NAME_FOR_CUSTOM2),
+                options.get(CONF_NAME_FOR_CUSTOM3, DEFAULT_NAME_FOR_CUSTOM3),
+            ),
+        )
+        if displayed is None:
+            return None
+        if isinstance(displayed, AlarmState):
+            return AlarmControlPanelState(displayed)
+        return displayed
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
