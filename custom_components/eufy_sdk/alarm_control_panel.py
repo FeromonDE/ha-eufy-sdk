@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any, TYPE_CHECKING
 
 from homeassistant.components.alarm_control_panel import (
     AlarmControlPanelEntity,
