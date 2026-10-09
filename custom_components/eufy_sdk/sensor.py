@@ -13,11 +13,18 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import callback
 from homeassistant.util import dt as dt_util
 
+from .alarm_logic import MODE_CUSTOM_1, MODE_CUSTOM_2, MODE_CUSTOM_3
 from .bespoke import BITFIELD_SWITCHES
 from .const import (
     CONF_GO2RTC_RTSP_PORT,
     CONF_HOST,
+    CONF_NAME_FOR_CUSTOM1,
+    CONF_NAME_FOR_CUSTOM2,
+    CONF_NAME_FOR_CUSTOM3,
     DEFAULT_GO2RTC_RTSP_PORT,
+    DEFAULT_NAME_FOR_CUSTOM1,
+    DEFAULT_NAME_FOR_CUSTOM2,
+    DEFAULT_NAME_FOR_CUSTOM3,
     EVENT_TYPE,
     LOGGER,
     SOLIX_READING_EVENT,
@@ -549,9 +556,15 @@ class EufySdkCurrentModeSensor(
 
     @property
     def native_value(self) -> str | None:
-        """The enforced mode's label, or None when nothing resolves it."""
+        """The enforced mode's label, honoring configured names for custom modes."""
         mode, _source = current_mode_for(self.device.get("state", {}), dt_util.now())
-        return mode_label(mode)
+        options = self.coordinator.config_entry.options
+        custom_names = {
+            MODE_CUSTOM_1: options.get(CONF_NAME_FOR_CUSTOM1, DEFAULT_NAME_FOR_CUSTOM1),
+            MODE_CUSTOM_2: options.get(CONF_NAME_FOR_CUSTOM2, DEFAULT_NAME_FOR_CUSTOM2),
+            MODE_CUSTOM_3: options.get(CONF_NAME_FOR_CUSTOM3, DEFAULT_NAME_FOR_CUSTOM3),
+        }
+        return custom_names.get(mode, mode_label(mode))
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
