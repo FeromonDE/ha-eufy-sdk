@@ -12,13 +12,13 @@ from homeassistant.components.alarm_control_panel import (
 from homeassistant.util import dt as dt_util
 
 from .alarm_logic import (
-    AlarmState,
     MODE_AWAY,
     MODE_CUSTOM_1,
     MODE_CUSTOM_2,
     MODE_CUSTOM_3,
     MODE_DISARMED,
     MODE_HOME,
+    AlarmState,
     display_alarm_state,
     panel_state_for,
 )
