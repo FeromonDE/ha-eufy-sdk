@@ -37,6 +37,14 @@ DEFAULT_POLL_INTERVAL_MIN = 10
 CONF_SOC_REFRESH = "soc_refresh_seconds"
 DEFAULT_SOC_REFRESH_SEC = 60
 
+# User-facing names for Eufy's three custom guard modes.
+CONF_NAME_FOR_CUSTOM1 = "name_for_custom1"
+CONF_NAME_FOR_CUSTOM2 = "name_for_custom2"
+CONF_NAME_FOR_CUSTOM3 = "name_for_custom3"
+DEFAULT_NAME_FOR_CUSTOM1 = "Custom 1"
+DEFAULT_NAME_FOR_CUSTOM2 = "Custom 2"
+DEFAULT_NAME_FOR_CUSTOM3 = "Custom 3"
+
 # Schema version this integration targets (the bridge sends its own in `hello`/`ready`).
 SUPPORTED_SCHEMA = 1
 
