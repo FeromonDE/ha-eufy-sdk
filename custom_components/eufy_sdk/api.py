@@ -402,6 +402,10 @@ class EufySdkApiClient:
         reply = await self.rpc("solix.setSocLimits", **kwargs)
         return reply.get("params") or {}
 
+    async def get_device(self, sn: str) -> dict[str, Any]:
+        """Return one device's current bridge-side state."""
+        return (await self.rpc("device.state", sn=sn))["device"]
+
     async def get_properties(self, sn: str) -> list[dict[str, Any]]:
         """Return a device's property manifest (name/type/unit/writable/enumValues)."""
         return normalize_properties(await self._property_reply(sn))
