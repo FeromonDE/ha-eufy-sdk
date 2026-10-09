@@ -127,6 +127,30 @@ def _apply_property_changed(
     )
 
 
+async def _refresh_arming_mode(
+    client: EufySdkApiClient,
+    coordinator: EufySdkDataUpdateCoordinator,
+    serial: str,
+) -> None:
+    """Refresh one HomeBase's mode first, then fall back to a full coordinator read."""
+    try:
+        device = await client.get_device(serial)
+        mode = device.get("state", {}).get("armingMode")
+        if mode is not None:
+            apply_arming_mode_event(
+                coordinator,
+                {
+                    "event": "armingModeChanged",
+                    "deviceSn": serial,
+                    "mode": mode,
+                },
+            )
+            return
+    except EufySdkApiClientError as err:
+        LOGGER.debug("targeted arming refresh failed for %s: %s", serial, err)
+    await coordinator.async_request_refresh()
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: EufySdkConfigEntry) -> bool:
     """Set up eufy_sdk from a config entry."""
     poll_min = entry.options.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL_MIN)
@@ -157,24 +181,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufySdkConfigEntry) -> b
             end_cancelled_delay(coordinator, entry.runtime_data.station_alarms, serial)
 
     async def _refresh_then_end_cancelled_delay(serial: str) -> None:
-        """Read only this HomeBase first; fall back to the account-wide coordinator poll."""
-        try:
-            device = await client.get_device(serial)
-            mode = device.get("state", {}).get("armingMode")
-            if mode is not None:
-                apply_arming_mode_event(
-                    coordinator,
-                    {
-                        "event": "armingModeChanged",
-                        "deviceSn": serial,
-                        "mode": mode,
-                    },
-                )
-                _end_cancelled_delay(serial)
-                return
-        except EufySdkApiClientError as err:
-            LOGGER.debug("targeted arming refresh failed for %s: %s", serial, err)
-        await coordinator.async_request_refresh()
+        await _refresh_arming_mode(client, coordinator, serial)
         _end_cancelled_delay(serial)
 
     def _on_event(evt: dict) -> None:
