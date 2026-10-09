@@ -22,7 +22,7 @@ from .alarm_sync import (
     clear_alarm,
     end_cancelled_delay,
 )
-from .api import EufySdkApiClient
+from .api import EufySdkApiClient, EufySdkApiClientError
 from .arming_sync import apply_arming_mode_event
 from .const import (
     ALARM_AUTO_CLEAR_SECONDS,
@@ -157,6 +157,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufySdkConfigEntry) -> b
             end_cancelled_delay(coordinator, entry.runtime_data.station_alarms, serial)
 
     async def _refresh_then_end_cancelled_delay(serial: str) -> None:
+        """Read only this HomeBase first; fall back to the account-wide coordinator poll."""
+        try:
+            device = await client.get_device(serial)
+            mode = device.get("state", {}).get("armingMode")
+            if mode is not None:
+                apply_arming_mode_event(
+                    coordinator,
+                    {
+                        "event": "armingModeChanged",
+                        "deviceSn": serial,
+                        "mode": mode,
+                    },
+                )
+                _end_cancelled_delay(serial)
+                return
+        except EufySdkApiClientError as err:
+            LOGGER.debug("targeted arming refresh failed for %s: %s", serial, err)
         await coordinator.async_request_refresh()
         _end_cancelled_delay(serial)
 
