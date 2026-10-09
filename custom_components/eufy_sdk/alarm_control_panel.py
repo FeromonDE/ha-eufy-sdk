@@ -83,7 +83,7 @@ class EufySdkAlarmControlPanel(
         self._boundary_unsub = None
 
     @property
-    def alarm_state(self) -> AlarmControlPanelState | None:
+    def alarm_state(self) -> AlarmControlPanelState | str | None:
         """
         The explicit Eufy-to-HA mapping, with the alarm lifecycle layered on top.
 
