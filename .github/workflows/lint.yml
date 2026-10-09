@@ -39,10 +39,7 @@ jobs:
           python3 -m pip install -r requirements_lint.txt
 
       - name: Lint
-        run: |
-          python3 -m ruff check custom_components/eufy_sdk/alarm_control_panel.py --fix
-          git diff -- custom_components/eufy_sdk/alarm_control_panel.py
-          exit 1
+        run: python3 -m ruff check .
 
       - name: Format
         run: python3 -m ruff format . --check
