@@ -18,6 +18,8 @@ from .const import (
     DEFAULT_GO2RTC_RTSP_PORT,
     DOMAIN,
 )
+from .entity import device_offline
+from .snapshot_policy import snapshot_url
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -79,8 +81,12 @@ class EufySdkCamera(CoordinatorEntity["EufySdkDataUpdateCoordinator"], Camera):
 
     @property
     def available(self) -> bool:
-        """Available while the bridge still reports this camera."""
-        return super().available and self._sn in self.coordinator.data
+        """Available while the bridge still reports this camera and it isn't offline."""
+        return (
+            super().available
+            and self._sn in self.coordinator.data
+            and not device_offline(self.coordinator.data.get(self._sn))
+        )
 
     async def stream_source(self) -> str:
         """Return the go2rtc RTSP URL — HA's stream component + go2rtc do the work."""
@@ -93,7 +99,12 @@ class EufySdkCamera(CoordinatorEntity["EufySdkDataUpdateCoordinator"], Camera):
     ) -> bytes | None:
         """Return a still from the bridge's /snapshot endpoint."""
         session = async_get_clientsession(self.hass)
-        url = f"http://{self._host}:{self._port}/snapshot/{self._sn}"
+        url = snapshot_url(
+            self._host,
+            self._port,
+            self._sn,
+            self.coordinator.config_entry.runtime_data.snapshot_policy.get(self._sn),
+        )
         try:
             async with session.get(url, timeout=20) as resp:
                 if resp.status == HTTPStatus.OK:

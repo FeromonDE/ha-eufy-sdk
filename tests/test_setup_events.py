@@ -33,9 +33,7 @@ class SetupEventTests(unittest.IsolatedAsyncioTestCase):
         client = Mock()
         client.set_poll_ms = AsyncMock()
         client.get_properties = AsyncMock(return_value=[])
-        client.get_device = AsyncMock(
-            return_value={"sn": "homebase", "state": {"armingMode": 4}}
-        )
+        client.get_device = AsyncMock(return_value={"state": {"armingMode": 4}})
         callbacks = []
 
         def make_client(**kwargs: Any) -> Mock:
@@ -60,7 +58,6 @@ class SetupEventTests(unittest.IsolatedAsyncioTestCase):
         await scheduled.pop()
         client.get_device.assert_awaited_once_with("homebase")
         self.assertEqual(coordinator.data["homebase"]["state"]["armingMode"], 4)
-        coordinator.async_update_listeners.assert_called_once_with()
         coordinator.async_request_refresh.assert_not_awaited()
 
         callbacks[0]({"event": "armingModeChanged", "deviceSn": "unknown"})

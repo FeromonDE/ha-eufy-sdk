@@ -385,13 +385,13 @@ class EufySdkFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class EufySdkOptionsFlow(config_entries.OptionsFlowWithReload):
-    """Options for runtime tuning."""
+    """Options: cloud poll interval (min) + Solarbank SOC-limit refresh (sec)."""
 
     async def async_step_init(
         self,
         user_input: dict[str, Any] | None = None,
     ) -> config_entries.ConfigFlowResult:
-        """Show and save the poll interval."""
+        """Show and save the poll interval and the SOC-limit refresh interval."""
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
         current_poll_interval = self.config_entry.options.get(

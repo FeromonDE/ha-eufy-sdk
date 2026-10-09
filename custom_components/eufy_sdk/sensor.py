@@ -11,12 +11,20 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import EntityCategory
 from homeassistant.core import callback
+from homeassistant.util import dt as dt_util
 
+from .alarm_logic import MODE_CUSTOM_1, MODE_CUSTOM_2, MODE_CUSTOM_3
 from .bespoke import BITFIELD_SWITCHES
 from .const import (
     CONF_GO2RTC_RTSP_PORT,
     CONF_HOST,
+    CONF_NAME_FOR_CUSTOM1,
+    CONF_NAME_FOR_CUSTOM2,
+    CONF_NAME_FOR_CUSTOM3,
     DEFAULT_GO2RTC_RTSP_PORT,
+    DEFAULT_NAME_FOR_CUSTOM1,
+    DEFAULT_NAME_FOR_CUSTOM2,
+    DEFAULT_NAME_FOR_CUSTOM3,
     EVENT_TYPE,
     LOGGER,
     SOLIX_READING_EVENT,
@@ -25,12 +33,18 @@ from .entity import (
     EufySdkDeviceEntity,
     EufySdkPropertyEntity,
     EufySolixEntity,
+    ScheduleBoundaryMixin,
     classify,
     has_capability,
     remove_stale_solix_entities,
     solix_devices_with,
 )
 from .light import LIGHT_HIDDEN_PROPS
+from .schedule_logic import (
+    current_mode_attributes,
+    current_mode_for,
+    mode_label,
+)
 
 if TYPE_CHECKING:
     from homeassistant.core import Event, HomeAssistant
@@ -38,7 +52,6 @@ if TYPE_CHECKING:
 
     from .coordinator import EufySdkDataUpdateCoordinator
     from .data import EufySdkConfigEntry
-
 
 # Nominal usable capacity of the Anker Solix Solarbank 4 E5000 Pro (AE103) — the "E5000"
 # in the name. Used to derive the time-to-full / time-to-empty countdown from SOC + W.
@@ -349,6 +362,13 @@ async def async_setup_entry(
         for sn, dev in coordinator.data.items()
         if has_capability(dev, "person_detection")
     )
+    # A "Current mode" sensor per station — the mode the hub is enforcing, which under
+    # `schedule` / `geo` is not the one it was set to (see schedule_logic).
+    entities.extend(
+        EufySdkCurrentModeSensor(coordinator, sn)
+        for sn, dev in coordinator.data.items()
+        if has_capability(dev, "arming")
+    )
     # A "Stream URL" sensor per camera — the RTSP URL while a live feed is active.
     host = entry.data[CONF_HOST]
     rtsp_port = int(entry.data.get(CONF_GO2RTC_RTSP_PORT, DEFAULT_GO2RTC_RTSP_PORT))
@@ -510,6 +530,46 @@ class EufySdkPropertySensor(EufySdkPropertyEntity, SensorEntity):
         if enum:
             return enum.get(str(v), v) if isinstance(v, (int, str)) else None
         return v if isinstance(v, (int, float, str)) else None
+
+
+class EufySdkCurrentModeSensor(
+    ScheduleBoundaryMixin, EufySdkDeviceEntity, SensorEntity
+):
+    """
+    The mode a HomeBase is enforcing right now, as the SDK's mode label.
+
+    Reads like the Arming Mode select, but resolves `schedule` to the slot in force
+    (from the station's timetable) — the old integration's
+    `current_mode`. The set mode and the answer's source ride along as attributes.
+    The timetable is resolved in HA's configured time zone, which has to match the
+    station's own local time (see schedule_logic).
+    """
+
+    _attr_translation_key = "current_mode"
+    _attr_icon = "mdi:shield-sync"
+
+    def __init__(self, coordinator: EufySdkDataUpdateCoordinator, sn: str) -> None:
+        """Bind to an arming-capable station."""
+        super().__init__(coordinator, sn)
+        self._attr_unique_id = f"{sn}_current_mode"
+        self._boundary_unsub = None
+
+    @property
+    def native_value(self) -> str | None:
+        """The enforced mode's label, honoring configured names for custom modes."""
+        mode, _source = current_mode_for(self.device.get("state", {}), dt_util.now())
+        options = self.coordinator.config_entry.options
+        custom_names = {
+            MODE_CUSTOM_1: options.get(CONF_NAME_FOR_CUSTOM1, DEFAULT_NAME_FOR_CUSTOM1),
+            MODE_CUSTOM_2: options.get(CONF_NAME_FOR_CUSTOM2, DEFAULT_NAME_FOR_CUSTOM2),
+            MODE_CUSTOM_3: options.get(CONF_NAME_FOR_CUSTOM3, DEFAULT_NAME_FOR_CUSTOM3),
+        }
+        return custom_names.get(mode, mode_label(mode))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """The set mode, the raw enforced mode and which source answered."""
+        return current_mode_attributes(self.device.get("state", {}), dt_util.now())
 
 
 class EufySdkLastPersonSensor(EufySdkDeviceEntity, SensorEntity):

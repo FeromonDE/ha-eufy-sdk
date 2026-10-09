@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.alarm_control_panel import (
     AlarmControlPanelEntity,
     AlarmControlPanelEntityFeature,
     AlarmControlPanelState,
 )
+from homeassistant.util import dt as dt_util
 
 from .alarm_logic import (
     MODE_AWAY,
@@ -18,7 +19,8 @@ from .alarm_logic import (
     MODE_DISARMED,
     MODE_HOME,
     AlarmState,
-    display_alarm_state_for_raw,
+    display_alarm_state,
+    panel_state_for,
 )
 from .const import (
     CONF_NAME_FOR_CUSTOM1,
@@ -28,7 +30,8 @@ from .const import (
     DEFAULT_NAME_FOR_CUSTOM2,
     DEFAULT_NAME_FOR_CUSTOM3,
 )
-from .entity import EufySdkDeviceEntity, has_capability
+from .entity import EufySdkDeviceEntity, ScheduleBoundaryMixin, has_capability
+from .schedule_logic import current_mode_attributes, current_mode_for
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -52,8 +55,16 @@ async def async_setup_entry(
     )
 
 
-class EufySdkAlarmControlPanel(EufySdkDeviceEntity, AlarmControlPanelEntity):
-    """Expose verified HomeBase modes through HA's alarm API."""
+class EufySdkAlarmControlPanel(
+    ScheduleBoundaryMixin, EufySdkDeviceEntity, AlarmControlPanelEntity
+):
+    """
+    Expose verified HomeBase modes through HA's alarm API.
+
+    On Schedule the panel shows the mode the timetable enforces right now (the same
+    resolution as the Current mode sensor), re-evaluated at each slot boundary; on
+    Geo, which only the hub can resolve, it stays unknown.
+    """
 
     _attr_code_arm_required = False
     _attr_supported_features = (
@@ -69,30 +80,43 @@ class EufySdkAlarmControlPanel(EufySdkDeviceEntity, AlarmControlPanelEntity):
         super().__init__(coordinator, serial)
         self._attr_unique_id = f"{serial}_alarm_control_panel"
         self._attr_name = "Security mode"
+        self._boundary_unsub = None
 
     @property
     def alarm_state(self) -> AlarmControlPanelState | str | None:
-        """Return the Eufy mode, using configured labels for custom modes 1/2/3."""
+        """
+        The explicit Eufy-to-HA mapping, with the alarm lifecycle layered on top.
+
+        `triggered` while the hub reports its alarm sounding and `pending` during an
+        entry/exit delay — both come from the `alarm` push (see alarm_sync) and clear on
+        the hub's own stop push or the auto-clear fallback.
+        """
+        alarms = self.coordinator.config_entry.runtime_data.station_alarms
+        mode, _source = current_mode_for(self.device.get("state", {}), dt_util.now())
+        state = panel_state_for({"armingMode": mode}, alarms.get(self._sn))
         options = self.coordinator.config_entry.options
-        state = display_alarm_state_for_raw(
-            self.device.get("state", {}).get("armingMode"),
+        displayed = display_alarm_state(
+            state,
             (
                 options.get(CONF_NAME_FOR_CUSTOM1, DEFAULT_NAME_FOR_CUSTOM1),
                 options.get(CONF_NAME_FOR_CUSTOM2, DEFAULT_NAME_FOR_CUSTOM2),
                 options.get(CONF_NAME_FOR_CUSTOM3, DEFAULT_NAME_FOR_CUSTOM3),
             ),
         )
-        if state is None:
+        if displayed is None:
             return None
-        if isinstance(state, AlarmState):
-            return AlarmControlPanelState(state)
-        return state
+        if isinstance(displayed, AlarmState):
+            return AlarmControlPanelState(displayed)
+        return displayed
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """The set mode, the enforced mode id and its source, as on Current mode."""
+        return current_mode_attributes(self.device.get("state", {}), dt_util.now())
 
     async def _set_mode(self, raw: int) -> None:
         """Send a raw mode; the bridge event is the canonical state update."""
-        # Deliberately no optimistic coordinator write here: the UI changes only after
-        # the bridge confirms the HomeBase's actual mode via armingModeChanged.
-        client = self.coordinator.config_entry.runtime_data.client
+        client = self.client
         await client.set_property(self._sn, "armingMode", raw)
 
     async def async_alarm_arm_home(
