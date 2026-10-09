@@ -111,3 +111,17 @@ def panel_state_for(
     if alarm.get("alarmPending"):
         return AlarmState.PENDING
     return alarm_state_for_raw(state.get("armingMode"))
+
+
+def display_alarm_state(
+    state: AlarmState | None,
+    custom_names: tuple[str, str, str],
+) -> AlarmState | str | None:
+    """Substitute user labels for Eufy's three custom alarm states."""
+    if state == AlarmState.ARMED_CUSTOM_BYPASS:
+        return custom_names[0]
+    if state == AlarmState.ARMED_NIGHT:
+        return custom_names[1]
+    if state == AlarmState.ARMED_VACATION:
+        return custom_names[2]
+    return state
