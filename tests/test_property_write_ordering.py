@@ -71,8 +71,9 @@ class TestPropertyWriteOrdering(IsolatedAsyncioTestCase):
         """Only matching valued property reports reach the entity callback."""
         entity, _coordinator, _client = self._entity()
 
-        def event(**data: object) -> SimpleNamespace:
-            return SimpleNamespace(data=data)
+        # The event bus passes a raw data dict to event_filter.
+        def event(**data: object) -> dict[str, object]:
+            return data
 
         assert entity._property_event_filter(
             event(
