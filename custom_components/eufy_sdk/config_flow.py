@@ -58,7 +58,6 @@ class EufySdkFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         self._host: str = ""
         self._port: int = DEFAULT_PORT
         self._go2rtc_rtsp_port: int = DEFAULT_GO2RTC_RTSP_PORT
-        self._entry_to_update: config_entries.ConfigEntry | None = None
 
     def _set_bridge_fields(self, data: dict[str, Any]) -> None:
         """Store bridge form/discovery fields on the in-progress flow."""
@@ -155,6 +154,8 @@ class EufySdkFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                 LOGGER.warning("bridge connect failed: %s", err)
                 errors["base"] = "cannot_connect"
             else:
+                if aborted := await self._abort_if_bridge_configured():
+                    return aborted
                 return await self._continue_auth()
 
         return self.async_show_form(
@@ -220,10 +221,26 @@ class EufySdkFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             "host": f"{self._host}:{self._port}",
         }
 
-        self._entry_to_update = self._find_existing_entry(discovery_info.uuid)
-        if self._entry_to_update is None:
-            await self.async_set_unique_id(discovery_info.uuid)
-            self._abort_if_unique_id_configured(updates=self._entry_data())
+        # The add-on re-announces its Supervisor gateway address on every start. When
+        # this bridge already has an entry, refresh its addresses and drop the discovery
+        # so it isn't offered again, but do NOT clobber an address the user pinned that
+        # still works: unpublishing the add-on's host ports makes the gateway address
+        # unreachable while the add-on hostname still reaches it (#142). Adopt the
+        # discovered address only when it already matches, or when the stored one is
+        # no longer reachable, so discovery still recovers an entry gone stale.
+        existing = self._find_existing_entry(discovery_info.uuid)
+        if existing is not None:
+            keep_stored = not self._discovery_matches_entry(
+                existing
+            ) and await self._entry_host_reachable(existing)
+            return self.async_update_reload_and_abort(
+                existing,
+                data_updates=None if keep_stored else self._entry_data(),
+                reason="already_configured",
+                reload_even_if_entry_is_unchanged=False,
+            )
+        await self.async_set_unique_id(discovery_info.uuid)
+        self._abort_if_unique_id_configured(updates=self._entry_data())
 
         try:
             self._client = EufySdkApiClient(
@@ -234,7 +251,36 @@ class EufySdkFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             LOGGER.warning("discovered bridge connect failed: %s", err)
             return self.async_abort(reason="cannot_connect")
 
+        if aborted := await self._abort_if_bridge_configured():
+            return aborted
         return await self.async_step_hassio_confirm()
+
+    async def _abort_if_bridge_configured(
+        self,
+    ) -> config_entries.ConfigFlowResult | None:
+        """
+        Abort when an entry already holds this bridge, under whatever address.
+
+        An add-on is discovered at its Supervisor address, while the same bridge may
+        have been added by LAN IP or hostname, so only its `bridgeId` tells them
+        apart. A new entry takes that id as its unique id. An older bridge has none,
+        so nothing changes.
+        """
+        if self._client is None:
+            return None
+        try:
+            await self._client.auth_status()
+        except EufySdkApiClientError:
+            return None
+        bridge_id = self._client.bridge_id
+        if not bridge_id:
+            return None
+        if any(e.unique_id == bridge_id for e in self._async_current_entries()):
+            await self._client.close()
+            self._client = None
+            return self.async_abort(reason="already_configured")
+        await self.async_set_unique_id(bridge_id, raise_on_progress=False)
+        return None
 
     async def async_step_hassio_confirm(
         self,
@@ -284,10 +330,6 @@ class EufySdkFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             return self.async_update_reload_and_abort(
                 self._get_reauth_entry(), data_updates={}
             )
-        if self._entry_to_update is not None:
-            return self.async_update_reload_and_abort(
-                self._entry_to_update, data_updates=self._entry_data()
-            )
         return self.async_create_entry(
             title=f"eufy bridge ({self._host})",
             data=self._entry_data(),
@@ -300,6 +342,35 @@ class EufySdkFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_PORT: self._port,
             CONF_GO2RTC_RTSP_PORT: self._go2rtc_rtsp_port,
         }
+
+    def _discovery_matches_entry(self, entry: config_entries.ConfigEntry) -> bool:
+        """Whether the discovered address already equals the entry's stored one."""
+        try:
+            return (
+                str(entry.data.get(CONF_HOST)).strip() == self._host
+                and int(entry.data[CONF_PORT]) == self._port
+            )
+        except (KeyError, TypeError, ValueError):
+            return False
+
+    async def _entry_host_reachable(self, entry: config_entries.ConfigEntry) -> bool:
+        """Whether the bridge is reachable at the entry's currently stored host/port."""
+        try:
+            host = str(entry.data[CONF_HOST]).strip()
+            port = int(entry.data[CONF_PORT])
+        except (KeyError, TypeError, ValueError):
+            return False
+        if not host:
+            return False
+        client = EufySdkApiClient(host, port, async_get_clientsession(self.hass))
+        try:
+            await client.connect()
+        except EufySdkApiClientError:
+            return False
+        else:
+            return True
+        finally:
+            await client.close()
 
     def _find_existing_entry(
         self, discovery_uuid: str
@@ -360,7 +431,9 @@ class EufySdkFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                 await self._client.retrigger_auth()
                 return await self._continue_auth()
             auth = await self._client.submit_captcha(str(user_input["answer"]))
-            if auth.get("state") == "ok":
+            # A correct answer can lead on to an email 2FA code instead of straight to
+            # "ok"; only another captcha means the answer was wrong.
+            if auth.get("state") in ("ok", "require_2fa"):
                 return await self._continue_auth()
             errors["base"] = "invalid_captcha"
 

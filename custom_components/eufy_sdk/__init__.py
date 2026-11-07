@@ -117,7 +117,7 @@ def _apply_property_changed(
         return
 
     serial = evt.get("deviceSn") or evt.get("sn")
-    if not serial or serial not in coordinator.data:
+    if not serial or serial not in (coordinator.data or {}):
         return
 
     entry.async_create_background_task(
@@ -196,7 +196,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufySdkConfigEntry) -> b
 
         if event == "contactState":
             sn = evt.get("deviceSn") or evt.get("sn")
-            if sn and sn in coordinator.data and "open" in evt:
+            if sn and sn in (coordinator.data or {}) and "open" in evt:
                 coordinator.data[sn].setdefault("state", {})["contact"] = bool(
                     evt.get("open")
                 )
@@ -206,7 +206,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufySdkConfigEntry) -> b
             if "mode" in evt:
                 apply_arming_mode_event(coordinator, evt)
                 _end_cancelled_delay(serial)
-            elif serial and serial in coordinator.data:
+            elif serial and serial in (coordinator.data or {}):
                 entry.async_create_background_task(
                     hass,
                     _refresh_then_end_cancelled_delay(serial),
@@ -231,6 +231,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EufySdkConfigEntry) -> b
     )
 
     await coordinator.async_config_entry_first_refresh()
+    _adopt_bridge_id(hass, entry, client.bridge_id)
 
     # Push the chosen poll interval to the bridge (the cloud-poll cadence lives there).
     try:
@@ -292,3 +293,26 @@ async def async_unload_entry(hass: HomeAssistant, entry: EufySdkConfigEntry) -> 
     if unloaded:
         await entry.runtime_data.client.close()
     return unloaded
+
+
+def _adopt_bridge_id(
+    hass: HomeAssistant, entry: EufySdkConfigEntry, bridge_id: str | None
+) -> None:
+    """
+    Key the entry by its bridge's stable id, so discovery recognises it.
+
+    An entry added by address keeps working, but a bridge it already holds would be
+    offered again under another address. If another entry already holds this bridge,
+    the two are duplicates: say so rather than re-keying.
+    """
+    if not bridge_id or entry.unique_id == bridge_id:
+        return
+    for other in hass.config_entries.async_entries(entry.domain):
+        if other.entry_id != entry.entry_id and other.unique_id == bridge_id:
+            LOGGER.warning(
+                "eufy-sdk entries '%s' and '%s' are the same bridge; remove one",
+                other.title,
+                entry.title,
+            )
+            return
+    hass.config_entries.async_update_entry(entry, unique_id=bridge_id)
