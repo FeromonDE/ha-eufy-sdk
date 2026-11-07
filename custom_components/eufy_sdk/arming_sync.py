@@ -10,7 +10,7 @@ def apply_arming_mode_event(coordinator: Any, event: dict[str, Any]) -> bool:
     if event.get("event") != "armingModeChanged" or "mode" not in event:
         return False
     serial = event.get("deviceSn") or event.get("sn")
-    if not serial or serial not in coordinator.data:
+    if not serial or serial not in (coordinator.data or {}):
         return False
     coordinator.data[serial].setdefault("state", {})["armingMode"] = event["mode"]
     coordinator.async_update_listeners()

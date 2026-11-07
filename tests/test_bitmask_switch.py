@@ -5,6 +5,9 @@
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, Mock
 
+import pytest
+from homeassistant.exceptions import HomeAssistantError
+
 from custom_components.eufy_sdk.switch import EufyBitmaskSwitch
 
 FALLBACK_BASE = 0x30000
@@ -45,11 +48,26 @@ class TestEufyBitmaskSwitch(IsolatedAsyncioTestCase):
             with self.subTest(reported=reported):
                 assert self._entity(reported)._mask() == expected
 
-    def test_mask_falls_back_for_non_numeric_state(self) -> None:
-        """Absent and non-numeric state use the configured fallback base."""
-        for reported in (None, "32775"):
-            with self.subTest(reported=reported):
-                assert self._entity(reported)._mask() == FALLBACK_BASE
+    def test_mask_falls_back_for_absent_state(self) -> None:
+        """Absent state uses the configured fallback base."""
+        assert self._entity(None)._mask() == FALLBACK_BASE
+
+    def test_a_numeric_string_is_the_mask_for_both_read_and_write(self) -> None:
+        """is_on and the write agree on a mask reported as a numeric string."""
+        entity = self._entity("32775")
+        assert entity._mask() == int("32775")
+        assert entity.is_on is True
+
+    async def test_a_json_value_reads_unknown_and_is_not_overwritten(self) -> None:
+        """A JSON-shaped report doesn't crash setup or get replaced by a number."""
+        entity = self._entity(
+            '{"ai_detect_type":196623,"ai_switch":1,"ai_use_global":1,'
+            '"ai_notification":2147483648,"channel":0}'
+        )
+        assert entity.is_on is None
+        with pytest.raises(HomeAssistantError):
+            await entity.async_turn_on()
+        entity.write.assert_not_awaited()
 
     async def test_write_preserves_device_specific_bits(self) -> None:
         """Change only the requested bit using real coordinator state."""

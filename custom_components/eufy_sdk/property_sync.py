@@ -24,7 +24,8 @@ def apply_property_changed_event(
     serial = event.get("deviceSn") or event.get("sn")
     prop = event.get("property")
 
-    if not serial or serial not in coordinator.data:
+    # Before the first refresh there is no device data to apply the report to.
+    if not serial or serial not in (coordinator.data or {}):
         return None
 
     if not isinstance(prop, str) or not prop:
