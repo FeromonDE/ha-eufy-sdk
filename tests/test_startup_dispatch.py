@@ -35,6 +35,7 @@ class StartupDispatchTests(unittest.IsolatedAsyncioTestCase):
         client = Mock(bridge_id="synthetic-bridge-id")
         client.set_poll_ms = AsyncMock()
         client.get_properties = AsyncMock(return_value=[])
+        client.get_device = AsyncMock(return_value={"state": {"armingMode": 1}})
         callbacks = []
 
         def make_client(**kwargs: Any) -> Mock:
@@ -92,7 +93,8 @@ class StartupDispatchTests(unittest.IsolatedAsyncioTestCase):
         callbacks[0]({"event": "armingModeChanged", "deviceSn": "homebase"})
         self.assertEqual(len(scheduled), 1)
         await scheduled.pop()
-        coordinator.async_request_refresh.assert_awaited_once_with()
+        client.get_device.assert_awaited_once_with("homebase")
+        coordinator.async_request_refresh.assert_not_awaited()
 
         callbacks[0]({"event": "armingModeChanged", "deviceSn": "unknown"})
         self.assertEqual(scheduled, [])

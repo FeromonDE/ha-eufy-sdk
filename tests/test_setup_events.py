@@ -13,12 +13,14 @@ class SetupEventTests(unittest.IsolatedAsyncioTestCase):
         hass = Mock()
         hass.bus.async_fire = Mock()
         hass.config_entries.async_forward_entry_setups = AsyncMock()
+        hass.config_entries.async_entries = Mock(return_value=[])
 
         entry = Mock()
         entry.data = {CONF_HOST: "bridge", CONF_PORT: 3000}
         entry.options = {}
         entry.domain = "eufy_sdk"
         entry.entry_id = "test-entry"
+        entry.unique_id = "synthetic-bridge-id"
         entry.add_update_listener = Mock(return_value=lambda: None)
         entry.async_on_unload = Mock()
         scheduled = []
@@ -30,7 +32,7 @@ class SetupEventTests(unittest.IsolatedAsyncioTestCase):
         coordinator.async_config_entry_first_refresh = AsyncMock()
         coordinator.async_request_refresh = AsyncMock()
 
-        client = Mock()
+        client = Mock(bridge_id="synthetic-bridge-id")
         client.set_poll_ms = AsyncMock()
         client.get_properties = AsyncMock(return_value=[])
         client.get_device = AsyncMock(return_value={"state": {"armingMode": 4}})
