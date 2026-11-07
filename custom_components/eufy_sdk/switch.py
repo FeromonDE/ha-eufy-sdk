@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.const import EntityCategory
+from homeassistant.exceptions import HomeAssistantError
 
 from .bespoke import BITFIELD_SWITCHES
 from .entity import (
@@ -163,15 +164,29 @@ class EufyBitmaskSwitch(EufySdkPropertyEntity, SwitchEntity):
         self._attr_entity_category = EntityCategory.CONFIG
 
     def _mask(self) -> int:
-        """Return the current full bitmask value (falls back to the enable base)."""
+        """
+        Return the current full bitmask value (falls back to the enable base).
+
+        Refuses when the device reports the value in a shape that isn't a bitmask
+        (a JSON object on some families): writing a bare number back would replace
+        the fields that object carries.
+        """
         v = self.prop_value
-        return int(v) if isinstance(v, (int, float)) else self._base
+        if v is None:
+            return self._base
+        mask = _as_mask(v)
+        if mask is None:
+            msg = (
+                f"{self._prop} is reported as {v!r}, not a bitmask; not overwriting it"
+            )
+            raise HomeAssistantError(msg)
+        return mask
 
     @property
     def is_on(self) -> bool | None:
-        """On when this bit is set in the current mask."""
-        v = self.prop_value
-        return None if v is None else bool(int(v) & self._bit)
+        """On when this bit is set in the current mask; unknown if it isn't one."""
+        mask = _as_mask(self.prop_value)
+        return None if mask is None else bool(mask & self._bit)
 
     async def async_turn_on(self, **_: Any) -> None:
         """Set this bit while preserving every other reported bit."""
@@ -180,3 +195,12 @@ class EufyBitmaskSwitch(EufySdkPropertyEntity, SwitchEntity):
     async def async_turn_off(self, **_: Any) -> None:
         """Clear this bit while preserving every other reported bit."""
         await self.write(self._mask() & ~self._bit)
+
+
+def _as_mask(value: Any) -> int | None:
+    """Return a reported bitmask as an int, or None for a value that isn't one."""
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str) and value.strip().lstrip("-").isdigit():
+        return int(value)
+    return None

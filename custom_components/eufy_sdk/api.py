@@ -76,6 +76,9 @@ class EufySdkApiClient:
         self._reconnect_task: asyncio.Task | None = None
         self._connect_lock = asyncio.Lock()
         self._closing = False
+        # The bridge's stable install id (`bridgeId`, from auth.status): the same
+        # whatever address it is reached at. None until known, or on an older bridge.
+        self.bridge_id: str | None = None
         self._next_id = 0
         self._pending: dict[int, asyncio.Future[dict[str, Any]]] = {}
         self._property_cache: dict[str, tuple[tuple | None, dict[str, Any]]] = {}
@@ -233,7 +236,11 @@ class EufySdkApiClient:
     # ── auth (mirrors the bridge's auth.* protocol) ──
     async def auth_status(self) -> dict[str, Any]:
         """Return the current auth state (ok|require_2fa|require_captcha|pending)."""
-        return (await self.rpc("auth.status"))["auth"]
+        reply = await self.rpc("auth.status")
+        bridge_id = reply.get("bridgeId")
+        if isinstance(bridge_id, str) and bridge_id:
+            self.bridge_id = bridge_id
+        return reply["auth"]
 
     async def submit_2fa(self, code: str) -> dict[str, Any]:
         """Submit a 2FA code; returns the new auth state."""
@@ -343,6 +350,10 @@ class EufySdkApiClient:
         msg = "metadata connection probe returned unknown auth state"
         raise EufySdkApiClientCommunicationError(msg)
 
+    async def get_device(self, sn: str) -> dict[str, Any]:
+        """Read the current state of one HomeBase for a targeted arming refresh."""
+        return (await self.rpc("device.state", sn=sn))["device"]
+
     async def refresh_event_image(self, sn: str) -> bool:
         """Force a 'Last event' image refresh; returns True if a newer image landed."""
         return bool((await self.rpc("event.refresh", sn=sn)).get("changed"))
@@ -401,10 +412,6 @@ class EufySdkApiClient:
             kwargs["chargeUpperLimit"] = int(charge)
         reply = await self.rpc("solix.setSocLimits", **kwargs)
         return reply.get("params") or {}
-
-    async def get_device(self, sn: str) -> dict[str, Any]:
-        """Return one device's current bridge-side state."""
-        return (await self.rpc("device.state", sn=sn))["device"]
 
     async def get_properties(self, sn: str) -> list[dict[str, Any]]:
         """Return a device's property manifest (name/type/unit/writable/enumValues)."""

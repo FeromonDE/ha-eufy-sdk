@@ -71,7 +71,7 @@ class TestPropertyWriteOrdering(IsolatedAsyncioTestCase):
         """Only matching valued property reports reach the entity callback."""
         entity, _coordinator, _client = self._entity()
 
-        # The event bus passes a raw data dict to event_filter.
+        # Home Assistant calls an event_filter with the event data dict, not the Event.
         def event(**data: object) -> dict[str, object]:
             return data
 
@@ -298,3 +298,55 @@ class TestPropertyWriteOrdering(IsolatedAsyncioTestCase):
         assert entity._assumed_value is None
         assert entity._removed is True
         assert entity.prop_value is False
+
+
+class TestUnreportedWritableProperty(IsolatedAsyncioTestCase):
+    """A settable property the device never reports keeps the value written to it."""
+
+    def _entity(self, *, reported: bool) -> EufySdkPropertyEntity:
+        client = Mock()
+        client.set_property = AsyncMock()
+        coordinator = Mock()
+        coordinator.data = {"camera": {"state": {}}}
+        coordinator.config_entry.runtime_data.client = client
+        coordinator.async_request_refresh = AsyncMock()
+        entity = EufySdkPropertyEntity.__new__(EufySdkPropertyEntity)
+        entity.coordinator = coordinator
+        entity._sn = "camera"
+        entity._prop = "imageFlipped"
+        entity._spec = {"name": "imageFlipped", "writable": True, "reported": reported}
+        entity._post_write_unsub = None
+        entity._post_write_owner = None
+        entity._assumed_value = None
+        entity._optimistic_owner = None
+        entity._write_generation = 0
+        entity._report_generation = 0
+        entity._removed = False
+        entity.hass = Mock()
+        entity.async_write_ha_state = Mock()
+        return entity
+
+    async def test_a_never_reported_setting_holds_the_written_value(self) -> None:
+        """No refresh wipes the written value back to unknown (#64)."""
+        entity = self._entity(reported=False)
+        with patch.object(entity, "_schedule_post_write_refresh") as refresh:
+            await entity.write(True)
+        refresh.assert_not_called()
+        assert entity.write_only
+        assert entity.prop_value is True
+
+    async def test_a_report_from_the_device_wins_over_the_held_value(self) -> None:
+        """Once the device reports the setting, its value is shown."""
+        entity = self._entity(reported=False)
+        with patch.object(entity, "_schedule_post_write_refresh"):
+            await entity.write(True)
+        entity.coordinator.data["camera"]["state"]["imageFlipped"] = False
+        assert entity.prop_value is False
+
+    async def test_a_reported_setting_still_reconciles_after_a_write(self) -> None:
+        """A setting the device reports keeps the post-write refresh."""
+        entity = self._entity(reported=True)
+        with patch.object(entity, "_schedule_post_write_refresh") as refresh:
+            await entity.write(True)
+        refresh.assert_called_once()
+        assert not entity.write_only

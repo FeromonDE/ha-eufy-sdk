@@ -31,13 +31,14 @@ def alarm_station_serial(coordinator: Any, event: dict[str, Any]) -> str | None:
     serial = alarm_event_serial(event)
     if not serial:
         return None
-    station = (coordinator.data.get(serial) or {}).get("stationSn")
+    data = coordinator.data or {}
+    station = (data.get(serial) or {}).get("stationSn")
     if not station or station == serial:
         for record in event.get("rec_content") or []:
             if isinstance(record, dict) and record.get("station_sn"):
                 station = record["station_sn"]
                 break
-    if station and station != serial and station in coordinator.data:
+    if station and station != serial and station in data:
         return station
     return serial
 
@@ -56,7 +57,7 @@ def apply_alarm_event(
     if phase is None:
         return None
     serial = alarm_station_serial(coordinator, event)
-    if not serial or serial not in coordinator.data:
+    if not serial or serial not in (coordinator.data or {}):
         return None
     alarms[serial] = {
         "alarmTriggered": phase == "triggered",
@@ -98,7 +99,7 @@ def clear_pending(coordinator: Any, alarms: StationAlarms, serial: str) -> bool:
 
 def end_cancelled_delay(coordinator: Any, alarms: StationAlarms, serial: str) -> bool:
     """End `pending` once the station's (fresh) arming mode is Disarmed or Home."""
-    device = coordinator.data.get(serial)
+    device = (coordinator.data or {}).get(serial)
     if not device:
         return False
     raw = device.get("state", {}).get("armingMode")
